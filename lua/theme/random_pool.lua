@@ -9,6 +9,11 @@ M._builtin_themes = {}
 ---@type table<string, true>
 M._installed_themes = {}
 
+local function seed_random()
+  local seed = vim.uv.hrtime() * vim.fn.getpid()
+  math.randomseed(math.floor(seed) % 2147483647)
+end
+
 local function scan_themes()
   if M._scanned then return end
   M._scanned = true
@@ -79,6 +84,7 @@ function M.get_random_pool()
   local exclude_set = resolve_specs(
     cfg.opts.random_pool.exclude
   )
+  exclude_set[utils.current_colorscheme()] = true
   local set = utils.set_difference(include_set, exclude_set)
   -- TODO: filter out disliked themes
 
@@ -88,6 +94,19 @@ function M.get_random_pool()
     table.insert(pool, name)
   end
   return pool
+end
+
+function M.apply_random()
+  seed_random()
+  local pool = M.get_random_pool()
+  if #pool == 0 then
+    vim.notify(
+      "theme-manager: no themes available in random pool",
+      vim.log.levels.WARN
+    )
+    return
+  end
+  utils.apply_colorscheme(pool[math.random(#pool)])
 end
 
 return M

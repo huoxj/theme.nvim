@@ -4,12 +4,22 @@ local M = {}
 ---@return string? name
 function M.apply_colorscheme(name)
   local ok, err = pcall(function() vim.cmd.colorscheme(name) end)
-  if not ok then
+  if ok then
+    vim.notify(
+      string.format("theme-manager: applied '%s'", name),
+      vim.log.levels.INFO
+    )
+  else
     vim.notify(
       "theme-manager: " .. tostring(err), vim.log.levels.ERROR
     )
     return nil
   end
+end
+
+---@return string name
+function M.current_colorscheme()
+  return vim.g.colors_name or ""
 end
 
 ---@param set_a table<string, true>
