@@ -22,17 +22,6 @@ function M.current_colorscheme()
   return vim.g.colors_name or ""
 end
 
----@param set_a table<string, true>
----@param set_b table<string, true>
----@return table<string, true> result
-function M.set_difference(set_a, set_b)
-  local result = {}
-  for k in pairs(set_a) do
-    if not set_b[k] then result[k] = true end
-  end
-  return result
-end
-
 function M.print_r(t)
   local print_r_cache = {}
   local function sub_print_r(t, indent)

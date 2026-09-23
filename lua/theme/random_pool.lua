@@ -4,14 +4,34 @@ local cfg = require("theme.config")
 local utils = require("theme.utils")
 
 M._scanned = false
----@type table<string, true>
+---@type string[]
 M._builtin_themes = {}
----@type table<string, true>
+---@type string[]
 M._installed_themes = {}
 
 local function seed_random()
   local seed = vim.uv.hrtime() * vim.fn.getpid()
   math.randomseed(math.floor(seed) % 2147483647)
+end
+
+---@param a string[]
+---@param b string[]
+---@return string[] result
+local function arr_diff(a, b)
+  local result = {}
+
+  ---@type table<string, true>
+  local set_b = {}
+  for _, v in ipairs(b) do
+    set_b[v] = true
+  end
+
+  for _, v in ipairs(a) do
+    if not set_b[v] then
+      table.insert(result, v)
+    end
+  end
+  return result
 end
 
 local function scan_themes()
@@ -33,9 +53,9 @@ local function scan_themes()
     local name = vim.fn.fnamemodify(file, ":t:r")
 
     if vim.fs.normalize(file):sub(1, #runtime + 1) == runtime .. "/" then
-      M._builtin_themes[name] = true
+      table.insert(M._builtin_themes, name)
     else
-      M._installed_themes[name] = true
+      table.insert(M._installed_themes, name)
     end
 
     ::continue::
@@ -44,24 +64,22 @@ local function scan_themes()
 end
 
 ---@param specs string[]
----@return table<string, true>
+---@return string[]
 local function resolve_specs(specs)
-  local theme_set = {}
+  local result = {}
   for _, name in ipairs(specs) do
     local themes = {}
-    if name == "#all" then themes = vim.tbl_extend(
-      "force", M.get_builtin_themes(), M.get_installed_themes()
-    )
+    if name == "#all" then themes = M.get_all_themes()
     elseif name == "#builtin" then themes = M.get_builtin_themes()
     elseif name:sub(1, 1) == "#" then
       vim.notify(
-        string.format("Unknown theme spec: %s", name),
+        string.format("Theme: Unknown theme spec: %s", name),
         vim.log.levels.WARN
       )
-    else themes = { [name] = true } end
-    theme_set = vim.tbl_extend("force", theme_set, themes)
+    else themes = { name } end
+    result = vim.tbl_extend("force", result, themes)
   end
-  return theme_set
+  return result
 end
 
 ---@return string[]
@@ -76,24 +94,27 @@ function M.get_installed_themes()
   return M._installed_themes
 end
 
+----@return string[]
+function M.get_all_themes()
+  scan_themes()
+  return vim.tbl_extend(
+    "force", M._builtin_themes, M._installed_themes
+  )
+end
+
 ---@return string[]
 function M.get_random_pool()
-  local include_set = resolve_specs(
+  local include = resolve_specs(
     cfg.opts.random_pool.include
   )
-  local exclude_set = resolve_specs(
+  local exclude = resolve_specs(
     cfg.opts.random_pool.exclude
   )
-  exclude_set[utils.current_colorscheme()] = true
-  local set = utils.set_difference(include_set, exclude_set)
+  table.insert(exclude, utils.current_colorscheme())
+  local result = arr_diff(include, exclude)
   -- TODO: filter out disliked themes
 
-  -- convert set to string[]
-  local pool = {}
-  for name in pairs(set) do
-    table.insert(pool, name)
-  end
-  return pool
+  return result
 end
 
 function M.apply_random()

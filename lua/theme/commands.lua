@@ -4,6 +4,8 @@ local M = {}
 function M.dispatch(args)
   if #args == 0 then
     -- TODO: open theme manager panel
+    -- Alternatively, open a telescope picker to select a theme
+    require("theme.picker").pick()
   elseif #args == 1 then
     if args[1] == "random" then
       require("theme.random_pool").apply_random()
