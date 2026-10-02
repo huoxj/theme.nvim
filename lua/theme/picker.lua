@@ -54,7 +54,7 @@ function M.pick(opts)
 
         pcall(vim.treesitter.start, buf, "lua")
 
-        local hls = data.query_hl(entry.value) or {}
+        local hls = data.query_hl(entry.value, "dark") or {}
         for group, attrs in pairs(hls) do
           vim.api.nvim_set_hl(preview_ns, group, attrs)
         end

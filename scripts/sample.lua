@@ -25,7 +25,10 @@ local function grab()
 end
 vim.opt.rtp:prepend(vim.env.CS_DIR)
 vim.cmd("highlight clear")
-pcall(vim.cmd, "colorscheme " .. vim.env.CS_NAME)
+local ok = pcall(vim.cmd, "colorscheme " .. vim.env.CS_NAME)
+if not (ok and vim.g.colors_name == vim.env.CS_NAME) then
+  os.exit(1)
+end
 io.stderr:write("[[[THEME.NVIM SAMPLING START]]]\n")
 io.stderr:write(vim.json.encode(grab()))
 io.stderr:write("\n[[[THEME.NVIM SAMPLING END]]]\n")

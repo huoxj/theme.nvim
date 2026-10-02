@@ -16,6 +16,7 @@
 # colors = key_count×3 bytes, 3 bytes big-endian RGB.
 
 import re
+import http.client
 import shutil
 import struct
 import sys
@@ -116,7 +117,8 @@ def pack_record(cs: Colorscheme) -> bytes:
             bg_bitmap[byte_index] |= mask
             bg_colors[index * 3 : index * 3 + 3] = (bg).to_bytes(3, "big")
 
-    out += bytes(fg_bitmap) + bytes(bg_bitmap) + bytes(fg_colors) + bytes(bg_colors)
+    out += bytes(fg_bitmap) + bytes(bg_bitmap) + \
+            bytes(fg_colors) + bytes(bg_colors)
 
     return bytes(out)
 
@@ -126,20 +128,28 @@ def build_bin(colorschemes: list[Colorscheme], path: Path):
 
     assert KEY_COUNT <= 65535, "Too many hl groups, max 65535"
     assert len(ordered) <= 65535, "Too many themes, max 65535"
-    header = bytearray(
-        struct.pack(
-            HEADER_FORMAT, MAGIC, KEY_COUNT, len(ordered), NAME_LEN, REPO_NAME_LEN
-        )
-    )
-    assert len(header) == HEADER_SIZE
 
     vocab = bytearray()
     for hlg in KEY_NAMES:
         vocab += pack_name(hlg, NAME_LEN)
 
     records = bytearray()
+    num_records = 0
     for cs in ordered:
-        records += pack_record(cs)
+        try:
+            records += pack_record(cs)
+            num_records += 1
+        except Exception as e:
+            print(f"Skipped {cs.name!r}: {e}")
+            continue
+
+    header = bytearray(
+        struct.pack(
+            HEADER_FORMAT, MAGIC,
+            KEY_COUNT, num_records, NAME_LEN, REPO_NAME_LEN
+        )
+    )
+    assert len(header) == HEADER_SIZE
 
     data = header + vocab + records
     Path(path).write_bytes(bytes(data))
@@ -152,6 +162,7 @@ def build_bin(colorschemes: list[Colorscheme], path: Path):
 class ThemeRepo:
     name: str
     default_branch: str
+    stars: int = 0
 
 
 QUERIES_KEYWORDS = (
@@ -163,6 +174,7 @@ QUERIES_KEYWORDS = (
 )
 # maximum number of results for a single keyword search
 SINGLE_KEYWORD_CUTOFF = 1000
+REPO_STARS_THRESHOLD = 50
 LUA_SCRIPT = Path(__file__).parent / "sample.lua"
 
 
@@ -184,6 +196,10 @@ def fetch(query: str, page: int) -> dict:
             wait = max(reset - time.time() + 1, 5)
             print(f"Rate limit. Retrying at {wait:.0f}s")
             time.sleep(wait)
+        except (http.client.HTTPException, urllib.error.URLError, 
+                TimeoutError, OSError) as e:
+            print(f"Network error: {e}. Retrying in 5s")
+            time.sleep(5)
 
 
 def gh_search() -> list[ThemeRepo]:
@@ -194,25 +210,37 @@ def gh_search() -> list[ThemeRepo]:
         page = 1
         got: dict[str, ThemeRepo] = {}
         while True:
-            data = fetch(query, page)
+            try:
+                data = fetch(query, page)
+            except urllib.error.HTTPError as e:
+                if e.code == 422:
+                    break
+                raise
             total = data.get("total_count", 0)
             items = data.get("items", [])[:SINGLE_KEYWORD_CUTOFF]
             if not items:
                 break
-            got.update(
-                {
-                    item["full_name"]: ThemeRepo(
-                        name=item["full_name"], default_branch=item["default_branch"]
-                    )
-                    for item in items
-                }
-            )
+            got.update({
+                item["full_name"]: ThemeRepo(
+                    name=item["full_name"],
+                    default_branch=item["default_branch"],
+                    stars=item.get("stargazers_count", 0)
+                )
+                for item in items 
+                if item.get("stargazers_count", 0) >= REPO_STARS_THRESHOLD
+            })
             if len(got) >= total or len(got) >= SINGLE_KEYWORD_CUTOFF:
                 break
             page += 1
+
+            print(
+                f"Searching {query} "
+                f"[{len(got)}/{SINGLE_KEYWORD_CUTOFF}]\r",
+                end=""
+            )
             time.sleep(7)
         repos.update(got)
-        print(f"Searched {query}: got {len(got)} repos, total {len(repos)}")
+        print(f"\nSearched {query}: got {len(got)} repos, total {len(repos)}")
 
     return sorted(repos.values(), key=lambda r: r.name)
 
@@ -225,14 +253,21 @@ Background = Literal["light", "dark"]
 def download(repo: str, branch: str, tempdir: Path) -> Path | None:
     dst = tempdir / repo.replace("/", "__")
     url = f"https://codeload.github.com/{repo}/tar.gz/refs/heads/{branch}"
-    try:
-        with urllib.request.urlopen(
-            urllib.request.Request(url, headers={"User-Agent": "theme.nvim"}),
-            timeout=60,
-        ) as r:
-            data = r.read()
-    except urllib.error.HTTPError:
-        return None
+    data = None
+    while True:
+        try:
+            with urllib.request.urlopen(
+                urllib.request.Request(url, headers={"User-Agent": "theme.nvim"}),
+                timeout=60,
+            ) as r:
+                data = r.read()
+            break
+        except urllib.error.HTTPError:
+            return None
+        except (http.client.HTTPException, urllib.error.URLError,
+                TimeoutError, OSError) as e:
+            print(f"Network error downloading {repo}: {e}. Retrying...")
+            time.sleep(5)
     if not data:
         return None
     shutil.rmtree(dst, ignore_errors=True)
@@ -259,8 +294,11 @@ def extract_cs_hlgs(
     p = subprocess.run(
         [ "nvim", "--headless", "-u", "NONE", "-i", "NONE",
           "-c", f"set background={bg}", "-l", str(LUA_SCRIPT) ],
-        capture_output=True, text=True, env=env, timeout=60, check=True,
+        capture_output=True, text=True, env=env, timeout=60, check=False,
     )
+    if p.returncode != 0:
+        print(f"Nvim output error: {p.stderr.strip()[:200]}")
+        return None
     try:
         sample = re.search(
             r"\[\[\[THEME\.NVIM SAMPLING START\]\]\]\n"
@@ -320,7 +358,8 @@ def extract_colorschmes(
     """
     # 1. extract colorscheme names under colors/
     cs_names = sorted(
-        p.stem for p in (repo_dir / "colors").glob("*") if p.suffix in (".vim", ".lua")
+        p.stem for p in (repo_dir / "colors").glob("*")
+        if p.suffix in (".vim", ".lua")
     )
 
     result: dict[tuple[str, Background], HighlightGroups] = {}
@@ -345,9 +384,16 @@ def resolve_theme_repos(repos: list[ThemeRepo]) -> list[Colorscheme]:
     repos: repositories, list of { name: ..., default_branch: ... }
     returns list of colorschemes { name, repo, is_light, hlgs }
     """
-    result: list[Colorscheme] = []
+    # (colorscheme_name, bg) -> (Colorscheme, stars)
+    result: dict[tuple[str, Background], tuple[Colorscheme, int]] = {}
     resolved = 0
     for repo in repos:
+        print(
+            f"Resolving progress: "
+            f"{resolved}/{len(repos)} repos, "
+            f"{len(result)} colorschemes\r",
+            end=""
+        )
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_dir = download(repo.name, repo.default_branch, Path(tmpdir))
             if repo_dir is None:
@@ -359,23 +405,33 @@ def resolve_theme_repos(repos: list[ThemeRepo]) -> list[Colorscheme]:
                 print(f"Fail on {repo.name}: {e}")
                 continue
         for (cs, bg), hlgs in colorschemes.items():
-            result.append(Colorscheme(
-                name=cs, repo=repo.name, is_light=bg == "light", hlgs=hlgs
-            ))
+            # Save same colorschemes with highest stars
+            if (cs, bg) in result and repo.stars <= result[(cs, bg)][1]:
+                continue
+            result[(cs, bg)] = (
+                Colorscheme(name=cs, repo=repo.name, is_light=bg == "light",
+                            hlgs=hlgs),
+                repo.stars
+            )
 
-    print(f"Resolved {resolved} repos, {len(result)} colorschemes")
-    return result
+    print(f"\nResolved {resolved} repos, {len(result)} colorschemes")
+    return [cs for cs, _ in result.values()]
 
 
 def main():
     """Usage: python build_hlbin.py [output_path]"""
     dst = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("lua/theme/hl.bin")
 
+    print(f"Building hl.bin to {dst}")
+
+    print("Searching for theme repos on Github...")
     repos = gh_search()
+    print("Resolving colorschemes from repos...")
     colorschemes = resolve_theme_repos(repos)
+    print(f"Found {len(colorschemes)} colorschemes, building hl.bin...")
     count, size = build_bin(colorschemes, dst)
 
-    print(f"Wrote {count} themes, {size} bytes to {dst}")
+    print(f"Finish! Wrote {count} themes, {size} bytes to {dst}")
 
 
 if __name__ == "__main__":
