@@ -144,5 +144,19 @@ function M.query_repo(name)
   return cs_repo_map[name]
 end
 
+--- Get colorschemes
+---@param background "light"|"dark"?
+---@return table<string, HighlightGroups>
+function M.colorschemes(background)
+  if not hlbin_loaded then load_hlbin() end
+  if background == "light" then
+    return light_colorschemes
+  elseif background == "dark" then
+    return dark_colorschemes
+  else
+    return vim.tbl_extend("force", light_colorschemes, dark_colorschemes)
+  end
+end
+
 return M
 
