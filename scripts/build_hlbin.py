@@ -257,7 +257,9 @@ def download(repo: str, branch: str, tempdir: Path) -> Path | None:
     while True:
         try:
             with urllib.request.urlopen(
-                urllib.request.Request(url, headers={"User-Agent": "theme.nvim"}),
+                urllib.request.Request(
+                    url, headers={"User-Agent": "theme.nvim"}
+                ),
                 timeout=60,
             ) as r:
                 data = r.read()
