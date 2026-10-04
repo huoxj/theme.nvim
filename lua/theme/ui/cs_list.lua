@@ -14,6 +14,9 @@ local SWATCH_W = #SWATCH
 local GLYPH = "∙"
 local SWATCH_TEXT = GLYPH:rep(SWATCH_W)
 
+local colorschemes = data.colorschemes()
+local colorscheme_names = vim.tbl_keys(colorschemes)
+
 local ns = vim.api.nvim_create_namespace("theme_ui_list")
 local hl_seq, hl_cache = 0, {}
 
@@ -66,7 +69,7 @@ local function build_row(row0, name, width, hlgs)
         row0,
         swatch_col + (i - 1) * #(GLYPH),
         swatch_col + i * #(GLYPH),
-        hl_for(name .. "|sw" .. i, {bg = color.bg, fg = color.fg}),
+        hl_for(name .. "|sw" .. i, color),
       }
     end
   end
@@ -77,8 +80,6 @@ end
 ---@param win integer
 function M.setup_cs_list(buf, win)
   local width = vim.api.nvim_win_get_width(win)
-  local colorschemes = data.colorschemes()
-  local colorscheme_names = vim.tbl_keys(colorschemes)
   table.sort(colorscheme_names)
 
   local lines, marks = {}, {}
@@ -108,7 +109,13 @@ function M.setup_cs_list(buf, win)
   vim.wo[win].cursorline = false
   vim.wo[win].wrap = false
   vim.api.nvim_set_current_win(win)
-  
+
+end
+
+function M.get_cursor_colorscheme(win)
+  local row = vim.api.nvim_win_get_cursor(win)[1]
+  local cs_name = colorscheme_names[row]
+  return cs_name, colorschemes[cs_name]
 end
 
 

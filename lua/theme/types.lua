@@ -1,8 +1,6 @@
 
 error('Cannot require a meta file')
 
----@class HighlightGroup
----@field fg integer?
----@field bg integer?
+---@class HighlightGroup : vim.api.keyset.highlight
 
 ---@alias HighlightGroups table<string, HighlightGroup>

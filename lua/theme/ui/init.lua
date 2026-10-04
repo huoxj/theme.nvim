@@ -1,5 +1,8 @@
 local M = {}
 
+local ui_preview = require("theme.ui.preview")
+local ui_list = require("theme.ui.cs_list")
+
 local ORDER = { "list", "info", "preview" }
 local active = nil
 
@@ -153,11 +156,11 @@ function M.open()
   end
 
   -- Setup list section
-  require("theme.ui.cs_list").setup_cs_list(
+  ui_list.setup_cs_list(
     p.bufs.list, p.wins.list
   )
   -- Setup preview section
-  require("theme.ui.preview").setup_preview(
+  ui_preview.setup_preview(
     p.bufs.preview, p.wins.preview
   )
 
@@ -177,6 +180,22 @@ function M.open()
           return
         end
       end
+    end
+  })
+
+  local current_cs_name, current_cs = nil, nil
+  vim.api.nvim_create_autocmd("CursorMoved", {
+    buffer = p.bufs.list,
+    callback = function()
+      -- update cursor colorscheme
+      current_cs_name, current_cs = ui_list.get_cursor_colorscheme(
+        p.wins.list
+      )
+      ui_preview.update_preview_hl(
+        p.bufs.preview, p.wins.preview,
+        current_cs_name,
+        current_cs
+      )
     end
   })
 

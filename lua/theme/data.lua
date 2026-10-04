@@ -154,6 +154,7 @@ function M.colorschemes(background)
   elseif background == "dark" then
     return dark_colorschemes
   else
+    -- TODO: bug, colorschemes with same name will be overwritten
     return vim.tbl_extend("force", light_colorschemes, dark_colorschemes)
   end
 end
