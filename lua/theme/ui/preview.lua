@@ -2,29 +2,28 @@ local M = {}
 
 local ns = vim.api.nvim_create_namespace("theme_ui_preview")
 local timer = vim.uv.new_timer()
-local cur_cs_name = nil
+local cur_cs = nil
 
+--- Apply a colorscheme's hlgs (resolved by bg filter) to the preview window
 ---@param buf integer
 ---@param win integer
----@param colorscheme_name string
----@param colorscheme HighlightGroups
-function M.update_preview_hl(
-  buf, win,
-  colorscheme_name,
-  colorscheme
-)
+---@param cs Colorscheme
+function M.update_preview_hl(buf, win, cs)
   if not timer then return end
-  if cur_cs_name == colorscheme_name then return end
+  if cur_cs == cs then return end
+  cur_cs = cs
   timer:stop()
   timer:start(500, 0, vim.schedule_wrap(
     function ()
-      for group, attrs in pairs(colorscheme) do
+      local data = require("theme.data")
+      local bg = require("theme.ui.cs_list").bg_filter() == "light"
+        and "light" or "dark"
+      for group, attrs in pairs(data.query_hl(cs.name, bg) or {}) do
         vim.api.nvim_set_hl(ns, group, attrs)
       end
       vim.api.nvim_win_set_hl_ns(win, ns)
     end
   ))
-
 end
 
 ---@param buf integer

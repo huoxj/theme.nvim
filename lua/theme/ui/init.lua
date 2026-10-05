@@ -124,6 +124,15 @@ local function map_keys(p)
       function() focus_win(p.wins, step) end,
       { buffer = buf })
     end
+  -- List actions: <CR> expands a repo row / applies a colorscheme row,
+  -- b cycles the light/dark/both filter
+  vim.keymap.set("n", "<CR>", function()
+    ui_list.toggle_expand(p.wins.list, p.bufs.list)
+    ui_list.apply_cursor(p.wins.list)
+  end, { buffer = p.bufs.list })
+  vim.keymap.set("n", "b", function()
+    ui_list.cycle_bg_filter(p.wins.list, p.bufs.list)
+  end, { buffer = p.bufs.list })
   for _, buf in pairs(p.bufs) do
     close_keymap(buf, "<Esc>")
     close_keymap(buf, "q")
@@ -183,18 +192,14 @@ function M.open()
     end
   })
 
-  local current_cs_name, current_cs = nil, nil
   vim.api.nvim_create_autocmd("CursorMoved", {
     buffer = p.bufs.list,
     callback = function()
       -- update cursor colorscheme
-      current_cs_name, current_cs = ui_list.get_cursor_colorscheme(
-        p.wins.list
-      )
+      local kind, _, cs = ui_list.get_cursor_entry(p.wins.list)
+      if kind ~= "cs" then return end
       ui_preview.update_preview_hl(
-        p.bufs.preview, p.wins.preview,
-        current_cs_name,
-        current_cs
+        p.bufs.preview, p.wins.preview, cs
       )
     end
   })

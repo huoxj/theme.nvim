@@ -1,24 +1,20 @@
-# Hl.bin data layout:
+# Hl.json data layout (consumed by lua/theme/data.lua):
 #
-# offset  size                  content
-# 0       16                    header: magic(8) key_count(2)
-#                                       colorscheme_count(2)
-#                                       name_len(2) repo_name_len(2)
-# 16      key_count*name_len    vocab: highlight group key names
-# ...     cs_count*record       record: colorscheme records
+# { num_repo: int, hlg_keys: string[], repos: Repo[] }
 #
-# record = colorscheme_name(name_len)
-#        + github_repo(repo_name_len)
-#        + flags(1)
-#        + highlight groups : fg_bitmap | bg_bitmap | fg_colors | bg_colors
-# bitmap = ceil(key_count/8) bytes, each bit indicates whether the group
-#          has fg/bg in this background
-# colors = key_count×3 bytes, 3 bytes big-endian RGB.
+# Repo = { name: "owner/repo", stars: int, description: string,
+#          num_colorschemes: int, colorschemes: Colorscheme[] }
+# Colorscheme = { name: string, bg_type: "light"|"dark"|"both",
+#                 hlgs_light: (Hlg?)[?], hlgs_dark: (Hlg?)[?] }
+#
+# Hlg arrays are positionally indexed by hlg_keys; null = unset group for
+# that background. Hlg holds the attrs nvim_set_hl accepts verbatim
+# (fg, bg, bold, italic, reverse, underline, sp, blend, ...) with 24-bit
+# int colors. Terminal-only attrs (cterm/ctermfg/ctermbg) are stripped.
 
 import re
 import http.client
 import shutil
-import struct
 import sys
 import json
 import io
@@ -27,6 +23,7 @@ import subprocess
 import time
 import tempfile
 import tarfile
+from collections import defaultdict
 from dataclasses import dataclass
 from typing import Literal
 import urllib.error
@@ -34,29 +31,17 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-
-@dataclass
-class HighlightGroup:
-    fg: int | None
-    bg: int | None
-
-HighlightGroups = dict[str, HighlightGroup]
+HighlightGroups = dict[str, dict]  # hlg_key -> attrs {fg, bg, bold, ...}
 
 @dataclass
 class Colorscheme:
     name: str
     repo: str
     is_light: bool
-    hlgs: dict[str, HighlightGroup]
+    hlgs: HighlightGroups
 
 
-# === Dump hl bin ===
-
-MAGIC = b"HLBIN\x00\x00\x01"
-HEADER_FORMAT = "<8sHHHH"
-HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
-NAME_LEN = 32
-REPO_NAME_LEN = 144
+# === Highlight group keys ===
 
 TREESITTER_KEYS = [ "@boolean", "@comment", "@comment.documentation",
     "@constant", "@constant.builtin", "@constructor", "@function",
@@ -71,89 +56,13 @@ CHROME_KEYS = [ "Normal", "LineNr", "CursorLineNr", "CursorLine", "Visual",
     "WinSeparator", "SignColumn", "NonText", "Title",
 ]
 KEY_NAMES = TREESITTER_KEYS + CHROME_KEYS
-KEY_COUNT = len(KEY_NAMES)
-BITMAP_LEN = (KEY_COUNT + 7) // 8
+
+# terminal-only attrs, useless for GUI rendering of list/preview
+STRIP_ATTRS = {"cterm", "ctermfg", "ctermbg"}
 
 
-def pack_name(name: str, length: int) -> bytes:
-    raw = name.encode()
-    if len(raw) > length:
-        raise ValueError(f"Name exceeds max length {length}: {name}")
-    return raw.ljust(length, b"\x00")
-
-
-def resolve_colors(
-    hlgs: HighlightGroups, hlg_key: str
-) -> tuple[int | None, int | None]:
-    if hlg_key not in hlgs:
-        return None, None
-    return hlgs[hlg_key].fg, hlgs[hlg_key].bg
-
-
-def pack_record(cs: Colorscheme) -> bytes:
-    out = bytearray()
-
-    out += pack_name(cs.name, NAME_LEN)
-    out += pack_name(cs.repo, REPO_NAME_LEN)
-
-    # Flags
-    flags = 0
-    flags |= 1 if cs.is_light else 0
-    out += struct.pack("<B", flags)
-
-    # Palette: fg_bitmap | bg_bitmap | fg_colors | bg_colors
-    fg_bitmap = bytearray(BITMAP_LEN)
-    bg_bitmap = bytearray(BITMAP_LEN)
-    fg_colors = bytearray(KEY_COUNT * 3)
-    bg_colors = bytearray(KEY_COUNT * 3)
-
-    for index, hlg_key in enumerate(KEY_NAMES):
-        fg, bg = resolve_colors(cs.hlgs, hlg_key)
-        byte_index, mask = index // 8, 1 << (index % 8)
-        if fg is not None:
-            fg_bitmap[byte_index] |= mask
-            fg_colors[index * 3 : index * 3 + 3] = (fg).to_bytes(3, "big")
-        if bg is not None:
-            bg_bitmap[byte_index] |= mask
-            bg_colors[index * 3 : index * 3 + 3] = (bg).to_bytes(3, "big")
-
-    out += bytes(fg_bitmap) + bytes(bg_bitmap) + \
-            bytes(fg_colors) + bytes(bg_colors)
-
-    return bytes(out)
-
-
-def build_bin(colorschemes: list[Colorscheme], path: Path):
-    ordered = sorted(colorschemes, key=lambda cs: cs.name.encode())
-
-    assert KEY_COUNT <= 65535, "Too many hl groups, max 65535"
-    assert len(ordered) <= 65535, "Too many themes, max 65535"
-
-    vocab = bytearray()
-    for hlg in KEY_NAMES:
-        vocab += pack_name(hlg, NAME_LEN)
-
-    records = bytearray()
-    num_records = 0
-    for cs in ordered:
-        try:
-            records += pack_record(cs)
-            num_records += 1
-        except Exception as e:
-            print(f"Skipped {cs.name!r}: {e}")
-            continue
-
-    header = bytearray(
-        struct.pack(
-            HEADER_FORMAT, MAGIC,
-            KEY_COUNT, num_records, NAME_LEN, REPO_NAME_LEN
-        )
-    )
-    assert len(header) == HEADER_SIZE
-
-    data = header + vocab + records
-    Path(path).write_bytes(bytes(data))
-    return len(ordered), len(data)
+def strip_attrs(attrs: dict) -> dict:
+    return {k: v for k, v in attrs.items() if k not in STRIP_ATTRS}
 
 
 # === Query themes ===
@@ -163,6 +72,7 @@ class ThemeRepo:
     name: str
     default_branch: str
     stars: int = 0
+    description: str = ""
 
 
 QUERIES_KEYWORDS = (
@@ -224,7 +134,8 @@ def gh_search() -> list[ThemeRepo]:
                 item["full_name"]: ThemeRepo(
                     name=item["full_name"],
                     default_branch=item["default_branch"],
-                    stars=item.get("stargazers_count", 0)
+                    stars=item.get("stargazers_count", 0),
+                    description=item.get("description") or "",
                 )
                 for item in items 
                 if item.get("stargazers_count", 0) >= REPO_STARS_THRESHOLD
@@ -311,10 +222,7 @@ def extract_cs_hlgs(
         if sample is None:
             raise RuntimeError("No sampling output")
         raw = json.loads(sample.group(1))
-        return {
-            k: HighlightGroup(fg=v.get("fg"), bg=v.get("bg"))
-            for k, v in raw.items()
-        }
+        return {k: strip_attrs(v) for k, v in raw.items() if v}
     except Exception:
         print(f"Nvim output error: {p.stderr.strip()[:200]}")
     return None
@@ -338,13 +246,13 @@ def check_background(hlgs: HighlightGroups | None) -> Background | None:
         return None
 
     bg_lumas = sorted(
-        lu for lu in (luma(g.bg) for g in hlgs.values()) if lu is not None
+        lu for lu in (luma(g.get("bg")) for g in hlgs.values()) if lu is not None
     )
     if bg_lumas:
         return "light" if bg_lumas[len(bg_lumas) // 2] > 128 else "dark"
 
     fg_lumas = sorted(
-        lu for lu in (luma(g.fg) for g in hlgs.values()) if lu is not None
+        lu for lu in (luma(g.get("fg")) for g in hlgs.values()) if lu is not None
     )
     if fg_lumas:
         return "dark" if fg_lumas[len(fg_lumas) // 2] > 128 else "light"
@@ -381,10 +289,10 @@ def extract_colorschmes(
     return result
 
 
-def resolve_theme_repos(repos: list[ThemeRepo]) -> list[Colorscheme]:
+def resolve_theme_repos(repos: list[ThemeRepo]) -> dict[str, list[Colorscheme]]:
     """Resolve colorschemes from repositories
-    repos: repositories, list of { name: ..., default_branch: ... }
-    returns list of colorschemes { name, repo, is_light, hlgs }
+    repos: repositories, list of { name, default_branch, stars, description }
+    returns repo name -> its colorschemes (deduped across repos by stars)
     """
     # (colorscheme_name, bg) -> (Colorscheme, stars)
     result: dict[tuple[str, Background], tuple[Colorscheme, int]] = {}
@@ -414,28 +322,70 @@ def resolve_theme_repos(repos: list[ThemeRepo]) -> list[Colorscheme]:
                 Colorscheme(name=cs, repo=repo.name, is_light=bg == "light",
                             hlgs=hlgs),
                 repo.stars
-            )
+        )
 
     print(f"\nResolved {resolved} repos, {len(result)} colorschemes")
-    return [cs for cs, _ in result.values()]
+    grouped: dict[str, list[Colorscheme]] = defaultdict(list)
+    for cs, _ in result.values():
+        grouped[cs.repo].append(cs)
+    return grouped
+
+
+def build_json(
+    grouped: dict[str, list[Colorscheme]], repos: list[ThemeRepo], path: Path
+) -> tuple[int, int]:
+    """Build the hl.json document"""
+    meta = {r.name: r for r in repos}
+
+    json_repos = []
+    for repo_name in sorted(grouped, key=lambda n: -meta[n].stars):
+        cs_map: dict[str, dict[str, HighlightGroups]] = defaultdict(dict)
+        for cs in grouped[repo_name]:
+            cs_map[cs.name]["light" if cs.is_light else "dark"] = cs.hlgs
+
+        colorschemes = []
+        for cs_name in sorted(cs_map):
+            bgs = cs_map[cs_name]
+            bg_type = "both" if len(bgs) == 2 else next(iter(bgs))
+            cs_json = {"name": cs_name, "bg_type": bg_type}
+            for bg in ("light", "dark"):
+                if bg in bgs:
+                    cs_json[f"hlgs_{bg}"] = [
+                        bgs[bg].get(key) for key in KEY_NAMES
+                    ]
+            colorschemes.append(cs_json)
+
+        r = meta[repo_name]
+        json_repos.append({
+            "name": r.name,
+            "stars": r.stars,
+            "description": r.description,
+            "num_colorschemes": len(colorschemes),
+            "colorschemes": colorschemes,
+        })
+
+    doc = {"num_repo": len(json_repos), "hlg_keys": KEY_NAMES, "repos": json_repos}
+    text = json.dumps(doc, ensure_ascii=False, separators=(",", ":"))
+    Path(path).write_text(text)
+    return len(json_repos), len(text)
 
 
 def main():
-    """Usage: python build_hlbin.py [output_path]"""
-    dst = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("lua/theme/hl.bin")
+    """Usage: python build_hljson.py [output_path]"""
+    dst = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("lua/theme/hl.json")
 
-    print(f"Building hl.bin to {dst}")
+    print(f"Building hl.json to {dst}")
 
     print("Searching for theme repos on Github...")
     repos = gh_search()
     print("Resolving colorschemes from repos...")
-    colorschemes = resolve_theme_repos(repos)
-    print(f"Found {len(colorschemes)} colorschemes, building hl.bin...")
-    count, size = build_bin(colorschemes, dst)
+    grouped = resolve_theme_repos(repos)
+    n_cs = sum(len(v) for v in grouped.values())
+    print(f"Found {n_cs} colorschemes in {len(grouped)} repos, building hl.json...")
+    count, size = build_json(grouped, repos, dst)
 
-    print(f"Finish! Wrote {count} themes, {size} bytes to {dst}")
+    print(f"Finish! Wrote {count} repos, {size} bytes to {dst}")
 
 
 if __name__ == "__main__":
     main()
-
