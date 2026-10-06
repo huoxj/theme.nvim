@@ -1,17 +1,13 @@
 # Hl.json data layout (consumed by lua/theme/data.lua):
 #
-# { num_repo: int, hlg_keys: string[], repos: Repo[] }
+# { name: Repo }
 #
 # Repo = { name: "owner/repo", stars: int, description: string,
-#          num_colorschemes: int, colorschemes: Colorscheme[] }
+#          num_colorschemes: int, colorschemes: { name: Colorscheme } }
+# 
 # Colorscheme = { name: string, repo: string,
 #                 bg_type: "light"|"dark"|"both",
 #                 hlgs_light: (Hlg?)[?], hlgs_dark: (Hlg?)[?] }
-#
-# Hlg arrays are positionally indexed by hlg_keys; null = unset group for
-# that background. Hlg holds the attrs nvim_set_hl accepts verbatim
-# (fg, bg, bold, italic, reverse, underline, sp, blend, ...) with 24-bit
-# int colors. Terminal-only attrs (cterm/ctermfg/ctermbg) are stripped.
 
 import re
 import http.client
@@ -24,6 +20,7 @@ import subprocess
 import time
 import tempfile
 import tarfile
+import dataclasses
 from dataclasses import dataclass, field
 from typing import Literal
 import urllib.error
@@ -40,9 +37,16 @@ Background = Literal["light", "dark"]
 class Colorscheme:
     name: str
     repo: str
-    bg_type: Literal["light", "dark", "both"] = "dark"
-    hlgs_light: HighlightGroups | None = None
-    hlgs_dark: HighlightGroups | None = None
+    hlgs: dict[Background, HighlightGroups] = field(default_factory=dict)
+    bg_type: Literal["light", "dark", "both"] = field(init=False)
+
+    def __post_init__(self):
+        if self.hlgs.get("light") and self.hlgs.get("dark"):
+            self.bg_type = "both"
+        elif self.hlgs.get("light"):
+            self.bg_type = "light"
+        else:
+            self.bg_type = "dark"
 
 
 @dataclass
@@ -52,7 +56,7 @@ class ThemeRepo:
     stars: int = 0
     description: str = ""
     num_colorschemes: int = 0
-    colorschemes: list[Colorscheme] = field(default_factory=list)
+    colorschemes: dict[str, Colorscheme] = field(default_factory=dict)
 
 
 TREESITTER_KEYS = [ "@boolean", "@comment", "@comment.documentation",
@@ -251,45 +255,31 @@ def detect_background(hlgs: HighlightGroups) -> Background:
 
 
 def extract_colorschmes(
+    repo_name: str,
     repo_dir: Path,
-) -> list[Colorscheme]:
+) -> dict[str, Colorscheme]:
     """Given theme repo, extract all colorschemes and their highlight groups
-    returns list of Colorschemes
+    returns dict of Colorschemes, keyed by name
     """
-    # 1. extract colorscheme names under colors/
+    # extract colorscheme names under colors/
     cs_names = sorted(
         p.stem for p in (repo_dir / "colors").glob("*")
         if p.suffix in (".vim", ".lua")
     )
 
-    def set_hlgs_by_bg(cs: Colorscheme, bg: Background, hlgs: HighlightGroups):
-        if bg == "light":
-            cs.hlgs_light = hlgs
-        else:
-            cs.hlgs_dark = hlgs
-
-    result: list[Colorscheme] = []
+    result: dict[str, Colorscheme] = {}
     for name in cs_names:
         try:
-            cs = Colorscheme(name=name, repo=str(repo_dir), bg_type="both")
+            hlgs: dict[Background, HighlightGroups] = {}
             for bg in ("light", "dark"):
-                hlgs = extract_cs_hlgs(str(repo_dir), name, bg)
-                detect_bg = detect_background(hlgs)
-                if detect_bg == "light":
-                    cs.hlgs_light = hlgs
-                else:
-                    cs.hlgs_dark = hlgs
-            if cs.hlgs_light is not None and cs.hlgs_dark is not None:
-                cs.bg_type = "both"
-            elif cs.hlgs_light is not None:
-                cs.bg_type = "light"
-            elif cs.hlgs_dark is not None:
-                cs.bg_type = "dark"
-                
+                sample = extract_cs_hlgs(str(repo_dir), name, bg)
+                hlgs[detect_background(sample)] = sample
+            result[name] = Colorscheme(
+                name=name, repo=repo_name, hlgs=hlgs
+            )
         except Exception as e:
             print(f"Fail on colorscheme {repo_dir.name}/{name}: {e}")
             continue
-
     return result
 
 
@@ -312,7 +302,7 @@ def resolve_theme_repos(repos: list[ThemeRepo]):
                 repo_dir = download(repo.name, repo.default_branch, Path(tmpdir))
                 if repo_dir is None:
                     continue
-                colorschemes = extract_colorschmes(repo_dir)
+                colorschemes = extract_colorschmes(repo.name, repo_dir)
                 resolved += 1
                 total_colorschemes += len(colorschemes)
             except Exception as e:
@@ -328,14 +318,18 @@ def build_json(
     repos: list[ThemeRepo], path: Path
 ) -> tuple[int, int]:
     """Build the hl.json document"""
-    doc = {
-        "num_repo": len(repos),
-        "hlg_keys": KEY_NAMES,
-        "repos": repos
-    }
-    text = json.dumps(doc, ensure_ascii=False, separators=(",", ":"))
+    doc = {}
+    for repo in repos:
+        if not repo.colorschemes:
+            continue
+        r = dataclasses.asdict(repo)
+        doc[repo.name] = r
+    text = json.dumps(
+        doc,
+        ensure_ascii=False, separators=(",", ":"),
+    )
     Path(path).write_text(text)
-    return len(repos), len(text)
+    return len(doc), len(text)
 
 
 def main():

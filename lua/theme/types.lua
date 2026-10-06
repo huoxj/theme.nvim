@@ -10,13 +10,14 @@ error('Cannot require a meta file')
 
 ---@class Colorscheme
 ---@field name string
+---@field repo string
 ---@field bg_type BgType
----@field hlgs_light (HighlightGroup?)[]?  indexed by hlg_keys
----@field hlgs_dark (HighlightGroup?)[]?  indexed by hlg_keys
+---@field hlgs table<"light"|"dark", HighlightGroups>
 
 ---@class Repo
 ---@field name string "owner/repo"
 ---@field stars number
 ---@field description string
 ---@field num_colorschemes number
----@field colorschemes Colorscheme[]
+---@field colorschemes table<string, Colorscheme>
+
