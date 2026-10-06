@@ -4,7 +4,8 @@
 #
 # Repo = { name: "owner/repo", stars: int, description: string,
 #          num_colorschemes: int, colorschemes: Colorscheme[] }
-# Colorscheme = { name: string, bg_type: "light"|"dark"|"both",
+# Colorscheme = { name: string, repo: string,
+#                 bg_type: "light"|"dark"|"both",
 #                 hlgs_light: (Hlg?)[?], hlgs_dark: (Hlg?)[?] }
 #
 # Hlg arrays are positionally indexed by hlg_keys; null = unset group for
@@ -23,8 +24,7 @@ import subprocess
 import time
 import tempfile
 import tarfile
-from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 import urllib.error
 import urllib.parse
@@ -33,15 +33,27 @@ from pathlib import Path
 
 HighlightGroups = dict[str, dict]  # hlg_key -> attrs {fg, bg, bold, ...}
 
+# vim.o.background
+Background = Literal["light", "dark"]
+
 @dataclass
 class Colorscheme:
     name: str
     repo: str
-    is_light: bool
-    hlgs: HighlightGroups
+    bg_type: Literal["light", "dark", "both"] = "dark"
+    hlgs_light: HighlightGroups | None = None
+    hlgs_dark: HighlightGroups | None = None
 
 
-# === Highlight group keys ===
+@dataclass
+class ThemeRepo:
+    name: str
+    default_branch: str
+    stars: int = 0
+    description: str = ""
+    num_colorschemes: int = 0
+    colorschemes: list[Colorscheme] = field(default_factory=list)
+
 
 TREESITTER_KEYS = [ "@boolean", "@comment", "@comment.documentation",
     "@constant", "@constant.builtin", "@constructor", "@function",
@@ -63,16 +75,6 @@ STRIP_ATTRS = {"cterm", "ctermfg", "ctermbg"}
 
 def strip_attrs(attrs: dict) -> dict:
     return {k: v for k, v in attrs.items() if k not in STRIP_ATTRS}
-
-
-# === Query themes ===
-
-@dataclass
-class ThemeRepo:
-    name: str
-    default_branch: str
-    stars: int = 0
-    description: str = ""
 
 
 QUERIES_KEYWORDS = (
@@ -156,11 +158,6 @@ def gh_search() -> list[ThemeRepo]:
     return sorted(repos.values(), key=lambda r: r.name)
 
 
-# === Resolve theme highlight groups ===
-
-Background = Literal["light", "dark"]
-
-
 def download(repo: str, branch: str, tempdir: Path) -> Path | None:
     dst = tempdir / repo.replace("/", "__")
     url = f"https://codeload.github.com/{repo}/tar.gz/refs/heads/{branch}"
@@ -196,7 +193,7 @@ def download(repo: str, branch: str, tempdir: Path) -> Path | None:
 
 def extract_cs_hlgs(
     repo_dir: str, colorscheme: str, bg: Background
-) -> HighlightGroups | None:
+) -> HighlightGroups:
     """Given colorscheme, extract and return its highlight group"""
     env = {
         **os.environ,
@@ -210,25 +207,20 @@ def extract_cs_hlgs(
         capture_output=True, text=True, env=env, timeout=60, check=False,
     )
     if p.returncode != 0:
-        print(f"Nvim output error: {p.stderr.strip()[:200]}")
-        return None
-    try:
-        sample = re.search(
-            r"\[\[\[THEME\.NVIM SAMPLING START\]\]\]\n"
-            r"(.*?)"
-            r"\[\[\[THEME\.NVIM SAMPLING END\]\]\]\n",
-            p.stderr, re.S
-        )
-        if sample is None:
-            raise RuntimeError("No sampling output")
-        raw = json.loads(sample.group(1))
-        return {k: strip_attrs(v) for k, v in raw.items() if v}
-    except Exception:
-        print(f"Nvim output error: {p.stderr.strip()[:200]}")
-    return None
+        raise RuntimeError(f"Nvim output error: {p.stderr.strip()[:200]}")
+    sample = re.search(
+        r"\[\[\[THEME\.NVIM SAMPLING START\]\]\]\n"
+        r"(.*?)"
+        r"\[\[\[THEME\.NVIM SAMPLING END\]\]\]\n",
+        p.stderr, re.DOTALL
+    )
+    if sample is None:
+        raise RuntimeError("No sampling output")
+    raw = json.loads(sample.group(1))
+    return {k: strip_attrs(v) for k, v in raw.items() if v}
 
 
-def check_background(hlgs: HighlightGroups | None) -> Background | None:
+def detect_background(hlgs: HighlightGroups) -> Background:
     """Detect whether the colorscheme is light or dark
     Based on the median luma of all highlight groups
     """
@@ -242,9 +234,6 @@ def check_background(hlgs: HighlightGroups | None) -> Background | None:
             + 0.0722 * (color & 0xFF)
         )
 
-    if not hlgs:
-        return None
-
     bg_lumas = sorted(
         lu for lu in (luma(g.get("bg")) for g in hlgs.values()) if lu is not None
     )
@@ -257,14 +246,15 @@ def check_background(hlgs: HighlightGroups | None) -> Background | None:
     if fg_lumas:
         return "dark" if fg_lumas[len(fg_lumas) // 2] > 128 else "light"
 
-    return None
+    # Fallback to dark
+    return "dark"
 
 
 def extract_colorschmes(
     repo_dir: Path,
-) -> dict[tuple[str, Background], HighlightGroups]:
+) -> list[Colorscheme]:
     """Given theme repo, extract all colorschemes and their highlight groups
-    returns list of dict: { (colorscheme, background): hlgs }
+    returns list of Colorschemes
     """
     # 1. extract colorscheme names under colors/
     cs_names = sorted(
@@ -272,102 +262,80 @@ def extract_colorschmes(
         if p.suffix in (".vim", ".lua")
     )
 
-    result: dict[tuple[str, Background], HighlightGroups] = {}
-    for cs in cs_names:
-        # 2. extract hlgs on both light and dark backgrounds
-        light_hlgs = extract_cs_hlgs(str(repo_dir), cs, "light")
-        dark_hlgs = extract_cs_hlgs(str(repo_dir), cs, "dark")
+    def set_hlgs_by_bg(cs: Colorscheme, bg: Background, hlgs: HighlightGroups):
+        if bg == "light":
+            cs.hlgs_light = hlgs
+        else:
+            cs.hlgs_dark = hlgs
 
-        # 3. detect colorscheme's background type
-        bg_l, bg_d = check_background(light_hlgs), check_background(dark_hlgs)
-
-        if bg_d is not None and dark_hlgs is not None:
-            result.setdefault((cs, bg_d), dark_hlgs)
-        if bg_l is not None and light_hlgs is not None:
-            result.setdefault((cs, bg_l), light_hlgs)
+    result: list[Colorscheme] = []
+    for name in cs_names:
+        try:
+            cs = Colorscheme(name=name, repo=str(repo_dir), bg_type="both")
+            for bg in ("light", "dark"):
+                hlgs = extract_cs_hlgs(str(repo_dir), name, bg)
+                detect_bg = detect_background(hlgs)
+                if detect_bg == "light":
+                    cs.hlgs_light = hlgs
+                else:
+                    cs.hlgs_dark = hlgs
+            if cs.hlgs_light is not None and cs.hlgs_dark is not None:
+                cs.bg_type = "both"
+            elif cs.hlgs_light is not None:
+                cs.bg_type = "light"
+            elif cs.hlgs_dark is not None:
+                cs.bg_type = "dark"
+                
+        except Exception as e:
+            print(f"Fail on colorscheme {repo_dir.name}/{name}: {e}")
+            continue
 
     return result
 
 
-def resolve_theme_repos(repos: list[ThemeRepo]) -> dict[str, list[Colorscheme]]:
+def resolve_theme_repos(repos: list[ThemeRepo]):
     """Resolve colorschemes from repositories
     repos: repositories, list of { name, default_branch, stars, description }
-    returns repo name -> its colorschemes (deduped across repos by stars)
+    returns repo name -> its colorschemes
     """
-    # (colorscheme_name, bg) -> (Colorscheme, stars)
-    result: dict[tuple[str, Background], tuple[Colorscheme, int]] = {}
     resolved = 0
+    total_colorschemes = 0
     for repo in repos:
         print(
             f"Resolving progress: "
             f"{resolved}/{len(repos)} repos, "
-            f"{len(result)} colorschemes\r",
+            f"{total_colorschemes} colorschemes\r",
             end=""
         )
         with tempfile.TemporaryDirectory() as tmpdir:
-            repo_dir = download(repo.name, repo.default_branch, Path(tmpdir))
-            if repo_dir is None:
-                continue
             try:
+                repo_dir = download(repo.name, repo.default_branch, Path(tmpdir))
+                if repo_dir is None:
+                    continue
                 colorschemes = extract_colorschmes(repo_dir)
                 resolved += 1
+                total_colorschemes += len(colorschemes)
             except Exception as e:
                 print(f"Fail on {repo.name}: {e}")
                 continue
-        for (cs, bg), hlgs in colorschemes.items():
-            # Save same colorschemes with highest stars
-            if (cs, bg) in result and repo.stars <= result[(cs, bg)][1]:
-                continue
-            result[(cs, bg)] = (
-                Colorscheme(name=cs, repo=repo.name, is_light=bg == "light",
-                            hlgs=hlgs),
-                repo.stars
-        )
+        repo.num_colorschemes = len(colorschemes)
+        repo.colorschemes = colorschemes
 
-    print(f"\nResolved {resolved} repos, {len(result)} colorschemes")
-    grouped: dict[str, list[Colorscheme]] = defaultdict(list)
-    for cs, _ in result.values():
-        grouped[cs.repo].append(cs)
-    return grouped
+    print(f"\nResolved {resolved} repos, {total_colorschemes} colorschemes")
 
 
 def build_json(
-    grouped: dict[str, list[Colorscheme]], repos: list[ThemeRepo], path: Path
+    repos: list[ThemeRepo], path: Path
 ) -> tuple[int, int]:
     """Build the hl.json document"""
-    meta = {r.name: r for r in repos}
-
-    json_repos = []
-    for repo_name in sorted(grouped, key=lambda n: -meta[n].stars):
-        cs_map: dict[str, dict[str, HighlightGroups]] = defaultdict(dict)
-        for cs in grouped[repo_name]:
-            cs_map[cs.name]["light" if cs.is_light else "dark"] = cs.hlgs
-
-        colorschemes = []
-        for cs_name in sorted(cs_map):
-            bgs = cs_map[cs_name]
-            bg_type = "both" if len(bgs) == 2 else next(iter(bgs))
-            cs_json = {"name": cs_name, "bg_type": bg_type}
-            for bg in ("light", "dark"):
-                if bg in bgs:
-                    cs_json[f"hlgs_{bg}"] = [
-                        bgs[bg].get(key) for key in KEY_NAMES
-                    ]
-            colorschemes.append(cs_json)
-
-        r = meta[repo_name]
-        json_repos.append({
-            "name": r.name,
-            "stars": r.stars,
-            "description": r.description,
-            "num_colorschemes": len(colorschemes),
-            "colorschemes": colorschemes,
-        })
-
-    doc = {"num_repo": len(json_repos), "hlg_keys": KEY_NAMES, "repos": json_repos}
+    doc = {
+        "num_repo": len(repos),
+        "hlg_keys": KEY_NAMES,
+        "repos": repos
+    }
     text = json.dumps(doc, ensure_ascii=False, separators=(",", ":"))
     Path(path).write_text(text)
-    return len(json_repos), len(text)
+    return len(repos), len(text)
 
 
 def main():
@@ -379,10 +347,9 @@ def main():
     print("Searching for theme repos on Github...")
     repos = gh_search()
     print("Resolving colorschemes from repos...")
-    grouped = resolve_theme_repos(repos)
-    n_cs = sum(len(v) for v in grouped.values())
-    print(f"Found {n_cs} colorschemes in {len(grouped)} repos, building hl.json...")
-    count, size = build_json(grouped, repos, dst)
+    resolve_theme_repos(repos)
+    print("Building hl.json...")
+    count, size = build_json(repos, dst)
 
     print(f"Finish! Wrote {count} repos, {size} bytes to {dst}")
 
