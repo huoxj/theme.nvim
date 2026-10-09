@@ -21,7 +21,7 @@ local repo_pane, cs_pane -- {buf, win}
 local prev_repo
 
 local ns = vim.api.nvim_create_namespace("theme_ui_list")
-local hl_seq, hl_cache = 0, {}
+local hl_seq = 0
 
 local function under_cursor(rows, win)
   return rows[vim.api.nvim_win_get_cursor(win)[1]]
@@ -32,13 +32,12 @@ function M.current_repo() return under_cursor(repo_rows, repo_pane.win) end
 ---@return Colorscheme?
 function M.current_cs() return under_cursor(cs_rows, cs_pane.win) end
 
-local function hl_for(key, attrs)
+local function hl_for(attrs)
   if not (attrs and (attrs.fg or attrs.bg)) then return nil end
-  if hl_cache[key] then return hl_cache[key] end
   hl_seq = hl_seq + 1
-  hl_cache[key] = "ThemeUIList" .. hl_seq
-  vim.api.nvim_set_hl(ns, hl_cache[key], attrs)
-  return hl_cache[key]
+  local name = "ThemeUIList" .. hl_seq
+  vim.api.nvim_set_hl(ns, name, attrs)
+  return name
 end
 
 -- Seek first highlight group with fg or bg from SWATCH candidate keys
@@ -47,8 +46,7 @@ end
 ---@return HighlightGroup?
 local function pick(hls, candidate_keys)
   for _, key in ipairs(candidate_keys) do
-    local hl = hls[key]
-    if hl and (hl.fg or hl.bg) then return hl end
+    return hls[key]
   end
   return nil
 end
@@ -74,9 +72,9 @@ local function build_cs_row(
 
   local marks = {}
   -- Name and spaces
-  local row = hl_for(text .. "|row", cs.hlgs[bg].Normal)
+  local row = hl_for(cs.hlgs[bg].Normal)
   if row then
-    marks[1] = { row0, 0, #text + #pad, row, 0 }
+    marks[#marks+1] = { row0, 0, #text + #pad, row, 0 }
   end
 
   local swatch_col = #text + #pad
@@ -87,7 +85,7 @@ local function build_cs_row(
         row0,
         swatch_col + (i - 1) * #(GLYPH),
         swatch_col + i * #(GLYPH),
-        hl_for(text .. "|sw" .. i, color),
+        hl_for(color),
       }
     end
   end
@@ -116,6 +114,7 @@ local function render_cs_list(repo)
   end
 
   -- 2. calculate line texts and extmarks
+  hl_seq = 0
   local buf, win = cs_pane.buf, cs_pane.win
   local width = vim.api.nvim_win_get_width(win)
 
@@ -142,6 +141,9 @@ local function render_cs_list(repo)
     )
   end
   vim.bo[buf].modifiable = false
+
+  vim.wo[win].wrap = false
+  vim.wo[win].cursorline = true
 end
 
 local function setup_repo_list(buf, win)
@@ -158,7 +160,7 @@ local function setup_repo_list(buf, win)
   for i, repo in ipairs(repo_rows) do
     local stars_text = "★ " .. repo.stars
     local name_text = repo.name
-    if #name_text + #stars_text + 1 > width then
+    if #name_text + #stars_text > width then
       name_text = name_text:sub(1, width - #stars_text - 3) .. ".."
     end
     local pad = (" "):rep(math.max(0, width - #name_text - #stars_text))
@@ -185,6 +187,7 @@ function M.sync()
   local repo = M.current_repo()
   if repo == prev_repo then return end
   prev_repo = repo
+  cs_rows = {}
   if repo then render_cs_list(repo) end
 end
 

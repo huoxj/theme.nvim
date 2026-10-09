@@ -5,15 +5,14 @@ local timer = vim.uv.new_timer()
 local cur_cs = nil
 
 --- Apply a colorscheme's hlgs (resolved by bg filter) to the preview window
----@param buf integer
 ---@param win integer
 ---@param cs Colorscheme
-function M.update_preview_hl(buf, win, cs)
+function M.update_preview_hl(win, cs)
   if not timer then return end
   if cur_cs == cs then return end
   cur_cs = cs
   timer:stop()
-  timer:start(500, 0, vim.schedule_wrap(
+  timer:start(200, 0, vim.schedule_wrap(
     function ()
       for group, attrs in pairs(cs.hlgs[cs.bg_type]) do
         vim.api.nvim_set_hl(ns, group, attrs)

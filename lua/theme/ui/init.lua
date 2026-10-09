@@ -194,31 +194,20 @@ function M.open()
     end
   })
 
-  vim.api.nvim_create_autocmd("CursorMoved", {
-    buffer = p.bufs.repo_list,
-    callback = function()
-      ui_list.sync()
-      local cs = ui_list.current_cs()
-      if cs then
-        ui_preview.update_preview_hl(
-          p.bufs.preview, p.wins.preview,
-          cs
-        )
+  for _, name in ipairs({ "repo_list", "cs_list" }) do
+    vim.api.nvim_create_autocmd("CursorMoved", {
+      buffer = p.bufs[name],
+      callback = function()
+        ui_list.sync()
+        local cs = ui_list.current_cs()
+        if cs then
+          ui_preview.update_preview_hl(
+            p.wins.preview, cs
+          )
+        end
       end
-    end
-  })
-
-  vim.api.nvim_create_autocmd("CursorMoved", {
-    buffer = p.bufs.cs_list,
-    callback = function()
-      local cs = ui_list.current_cs()
-      if cs then
-        ui_preview.update_preview_hl(
-          p.bufs.preview, p.wins.preview, cs
-        )
-      end
-    end
-  })
+    })
+  end
 
   active = p
 end
