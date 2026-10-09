@@ -3,8 +3,18 @@ local function resolve_group(k)
   local seen = {}
   while true do
     local hl = vim.api.nvim_get_hl(0, { name = k })
-    if hl and (hl.fg or hl.bg) then
-      return { fg = hl.fg, bg = hl.bg }
+    if hl and (hl.fg ~= nil or hl.bg ~= nil) then
+      -- nvim_get_hl returns a dict where missing fields are vim.NIL;
+      -- vim.NIL stringifies to 0, so json-encoding it verbatim corrupts
+      -- colors into 0x000000. Copy only true scalar attrs instead.
+      local out = {}
+      for attr, val in pairs(hl) do
+        if type(val) == "number" or type(val) == "boolean"
+            or type(val) == "string" then
+          out[attr] = val
+        end
+      end
+      return out
     end
     if not hl or not hl.link or seen[hl.link] then
       return nil
@@ -17,7 +27,7 @@ local function grab()
   local out = {}
   for _, k in ipairs(keys) do
     local hl = vim.api.nvim_get_hl(0, { name = k })
-    if hl and (hl.fg or hl.bg or hl.link) then
+    if hl and (hl.fg ~= nil or hl.bg ~= nil or hl.link ~= nil) then
       out[k] = resolve_group(k)
     end
   end
