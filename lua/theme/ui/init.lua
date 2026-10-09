@@ -1,9 +1,9 @@
 local M = {}
 
 local ui_preview = require("theme.ui.preview")
-local ui_list = require("theme.ui.cs_list")
+local ui_list = require("theme.ui.list")
 
-local ORDER = { "list", "info", "preview" }
+local ORDER = { "repo_list", "cs_list", "info", "preview" }
 local active = nil
 
 local function sections()
@@ -11,12 +11,22 @@ local function sections()
   local h = math.floor(vim.o.lines * 0.8)
   local row0 = math.floor((vim.o.lines - h) / 2)
   local col0 = math.floor((vim.o.columns - w) / 2)
-  local left, mid = math.floor(w * 0.2), math.floor(w * 0.4)
+  local w20, w40, w60 = math.floor(w * 0.2), math.floor(w * 0.4), math.floor(w * 0.6)
+  local h70 = math.floor(h * 0.7)
   return {
-    list = {
+    repo_list = {
       rect = {
         row = row0, col = col0,
-        width = left, height = h - 2,
+        width = w20, height = h70,
+      },
+      win_conf = {
+        border = "rounded"
+      }
+    },
+    cs_list = {
+      rect = {
+        row = row0 + h70 + 1, col = col0,
+        width = w20, height = h - h70 - 3,
       },
       win_conf = {
         border = "rounded"
@@ -24,8 +34,8 @@ local function sections()
     },
     info = {
       rect = {
-        row = row0, col = col0 + left + 1,
-        width = mid, height = h - 2,
+        row = row0, col = col0 + w20 + 1,
+        width = w40, height = h - 2,
       },
       win_conf = {
         zindex = 41,
@@ -34,8 +44,8 @@ local function sections()
     },
     preview = {
       rect = {
-        row = row0, col = col0 + left + mid + 2,
-        width = w - left - mid - 2, height = h - 2
+        row = row0, col = col0 + w60 + 2,
+        width = w - w60 - 2, height = h - 2
       },
       win_conf = {
         border = "rounded"
@@ -124,15 +134,6 @@ local function map_keys(p)
       function() focus_win(p.wins, step) end,
       { buffer = buf })
     end
-  -- List actions: <CR> expands a repo row / applies a colorscheme row,
-  -- b cycles the light/dark/both filter
-  vim.keymap.set("n", "<CR>", function()
-    ui_list.toggle_expand(p.wins.list, p.bufs.list)
-    ui_list.apply_cursor(p.wins.list)
-  end, { buffer = p.bufs.list })
-  vim.keymap.set("n", "b", function()
-    ui_list.cycle_bg_filter(p.wins.list, p.bufs.list)
-  end, { buffer = p.bufs.list })
   for _, buf in pairs(p.bufs) do
     close_keymap(buf, "<Esc>")
     close_keymap(buf, "q")
@@ -143,8 +144,8 @@ end
 
 function M.open()
   if active and not active.closed then
-    if vim.api.nvim_win_is_valid(active.wins.list) then
-      vim.api.nvim_set_current_win(active.wins.list)
+    if vim.api.nvim_win_is_valid(active.wins.repo_list) then
+      vim.api.nvim_set_current_win(active.wins.repo_list)
     end
     return
   end
@@ -165,8 +166,9 @@ function M.open()
   end
 
   -- Setup list section
-  ui_list.setup_cs_list(
-    p.bufs.list, p.wins.list
+  ui_list.setup_list(
+    p.bufs.repo_list, p.wins.repo_list,
+    p.bufs.cs_list, p.wins.cs_list
   )
   -- Setup preview section
   ui_preview.setup_preview(
@@ -193,14 +195,28 @@ function M.open()
   })
 
   vim.api.nvim_create_autocmd("CursorMoved", {
-    buffer = p.bufs.list,
+    buffer = p.bufs.repo_list,
     callback = function()
-      -- update cursor colorscheme
-      local kind, _, cs = ui_list.get_cursor_entry(p.wins.list)
-      if kind ~= "cs" then return end
-      ui_preview.update_preview_hl(
-        p.bufs.preview, p.wins.preview, cs
-      )
+      ui_list.sync()
+      local cs = ui_list.current_cs()
+      if cs then
+        ui_preview.update_preview_hl(
+          p.bufs.preview, p.wins.preview,
+          cs
+        )
+      end
+    end
+  })
+
+  vim.api.nvim_create_autocmd("CursorMoved", {
+    buffer = p.bufs.cs_list,
+    callback = function()
+      local cs = ui_list.current_cs()
+      if cs then
+        ui_preview.update_preview_hl(
+          p.bufs.preview, p.wins.preview, cs
+        )
+      end
     end
   })
 

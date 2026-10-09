@@ -15,10 +15,7 @@ function M.update_preview_hl(buf, win, cs)
   timer:stop()
   timer:start(500, 0, vim.schedule_wrap(
     function ()
-      local data = require("theme.data")
-      local bg = require("theme.ui.cs_list").bg_filter() == "light"
-        and "light" or "dark"
-      for group, attrs in pairs(data.query_hl(cs.name, bg) or {}) do
+      for group, attrs in pairs(cs.hlgs[cs.bg_type]) do
         vim.api.nvim_set_hl(ns, group, attrs)
       end
       vim.api.nvim_win_set_hl_ns(win, ns)

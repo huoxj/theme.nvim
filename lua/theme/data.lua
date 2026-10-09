@@ -51,7 +51,7 @@ function M.query_hl(repo, name, background)
 end
 
 ---@return table<string, Repo>
-function M.repos()
+function M.get_repos()
   ensure_load_hldata()
   return repos
 end
