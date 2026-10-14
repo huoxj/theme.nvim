@@ -1,37 +1,30 @@
+-- Repo list (left-top) and colorscheme list (left-bottom) of the panel.
 local M = {}
 
 local data = require("theme.data")
 
-local SWATCH = {
-  { "Search" },
-  { "PmenuSel" },
-  { "Visual" },
-  { "StatusLine" },
-  { "Pmenu" },
-}
--- Use super small circle character as swatch
-local SWATCH_W = #SWATCH
+-- Highlight groups whose colour is shown as a swatch on each colorscheme row.
+local SWATCH_KEYS = { { "Search" }, { "PmenuSel" }, { "Visual" }, { "StatusLine" }, { "Pmenu" } }
 local GLYPH = "∙"
-local SWATCH_TEXT = GLYPH:rep(SWATCH_W)
-
-local repo_rows, cs_rows = {}, {}
-local repo_pane, cs_pane -- {buf, win}
-
----@type Repo?
-local prev_repo
+local SWATCH_TEXT = GLYPH:rep(#SWATCH_KEYS)
 
 local ns = vim.api.nvim_create_namespace("theme_ui_list")
 local hl_seq = 0
+local repo_rows, cs_rows = {}, {}
+local repo_pane, cs_pane
+local prev_repo
 
-local function under_cursor(rows, win)
-  return rows[vim.api.nvim_win_get_cursor(win)[1]]
+---@param text string
+---@param max integer
+---@return string
+local function truncate(text, max)
+  if vim.fn.strdisplaywidth(text) <= max then return text end
+  return vim.fn.strcharpart(text, 0, math.max(1, max - 2)) .. ".."
 end
 
----@return Repo?
-function M.current_repo() return under_cursor(repo_rows, repo_pane.win) end
----@return Colorscheme?
-function M.current_cs() return under_cursor(cs_rows, cs_pane.win) end
-
+--- Define a one-off highlight group in the list namespace.
+---@param attrs HighlightGroup?
+---@return string? name
 local function hl_for(attrs)
   if not (attrs and (attrs.fg or attrs.bg)) then return nil end
   hl_seq = hl_seq + 1
@@ -40,52 +33,70 @@ local function hl_for(attrs)
   return name
 end
 
--- Seek first highlight group with fg or bg from SWATCH candidate keys
----@param hls HighlightGroups
----@param candidate_keys string[]
+---@param hlgs HighlightGroups?
+---@param keys string[]
 ---@return HighlightGroup?
-local function pick(hls, candidate_keys)
-  for _, key in ipairs(candidate_keys) do
-    return hls[key]
+local function pick(hlgs, keys)
+  for _, key in ipairs(keys) do
+    local attrs = hlgs and hlgs[key]
+    if attrs and (attrs.fg or attrs.bg) then return attrs end
   end
-  return nil
+end
+
+---@param rows table[]
+---@param win integer
+local function under_cursor(rows, win)
+  return rows[vim.api.nvim_win_get_cursor(win)[1]]
+end
+
+---@return Repo?
+function M.current_repo() return under_cursor(repo_rows, repo_pane.win) end
+---@return { name: string, bg: "light"|"dark", hlgs: HighlightGroups? }?
+function M.current_cs() return under_cursor(cs_rows, cs_pane.win) end
+
+--- One renderable row per colorscheme; "both" colorschemes yield two rows.
+---@param repo Repo
+local function rows_for(repo)
+  local colorschemes = vim.tbl_values(repo.colorschemes)
+  table.sort(colorschemes, function(a, b) return a.name < b.name end)
+
+  local rows = {}
+  for _, colorscheme in ipairs(colorschemes) do
+    if colorscheme.bg_type == "both" then
+      rows[#rows + 1] = { name = colorscheme.name, bg = "dark", hlgs = colorscheme.hlgs.dark }
+      rows[#rows + 1] = { name = colorscheme.name, bg = "light", hlgs = colorscheme.hlgs.light }
+    else
+      rows[#rows + 1] = {
+        name = colorscheme.name, bg = colorscheme.bg_type,
+        hlgs = colorscheme.hlgs[colorscheme.bg_type],
+      }
+    end
+  end
+  return rows
 end
 
 ---@param row0 integer
----@param cs Colorscheme
+---@param row { name: string, bg: "light"|"dark", hlgs: HighlightGroups? }
 ---@param width integer
----@param bg "light"|"dark"
----@return string, integer[][]
-local function build_cs_row(
-  row0, cs, width, bg
-)
-  local bg_icon = bg == "light" and "" or ""
-  local text = bg_icon .. " " .. cs.name
-
-  local max_width = width - SWATCH_W - 1
-  if #text > max_width then
-    text = text:sub(1, max_width - 2) .. ".."
-  end
-
-  local pad = (" "):rep(math.max(0, width - #text - SWATCH_W))
+---@return string text, integer[][] marks
+local function build_cs_row(row0, row, width)
+  local icon = row.bg == "light" and "" or ""
+  local text = truncate(icon .. " " .. row.name, width - #SWATCH_KEYS - 1)
+  local pad = (" "):rep(math.max(0, width - vim.fn.strdisplaywidth(text) - #SWATCH_KEYS))
   local full = text .. pad .. SWATCH_TEXT
 
-  local marks = {}
-  -- Name and spaces
-  local row = hl_for(cs.hlgs[bg].Normal)
-  if row then
-    marks[#marks+1] = { row0, 0, #text + #pad, row, 0 }
-  end
-
+  -- extmark columns are byte offsets; GLYPH is 3 bytes, 1 cell wide
   local swatch_col = #text + #pad
-  for i, candidate_keys in ipairs(SWATCH) do
-    local color = pick(cs.hlgs[bg], candidate_keys)
-    if color then
+  local marks = {}
+  local name_hl = hl_for(row.hlgs and row.hlgs.Normal)
+  if name_hl then
+    marks[#marks + 1] = { row0, 0, swatch_col, name_hl, 0 }
+  end
+  for i, keys in ipairs(SWATCH_KEYS) do
+    local swatch_hl = hl_for(pick(row.hlgs, keys))
+    if swatch_hl then
       marks[#marks + 1] = {
-        row0,
-        swatch_col + (i - 1) * #(GLYPH),
-        swatch_col + i * #(GLYPH),
-        hl_for(color),
+        row0, swatch_col + (i - 1) * #GLYPH, swatch_col + i * #GLYPH, swatch_hl,
       }
     end
   end
@@ -94,77 +105,46 @@ end
 
 ---@param repo Repo
 local function render_cs_list(repo)
-  -- 1. update rows of Colorschemes to render
-  local rows = vim.tbl_values(repo.colorschemes)
-  table.sort(rows, function(a, b)
-    return a.name < b.name
-  end)
-  cs_rows = {}
-  -- split "both" colorschemes into two rows. but this implement is not ideal
-  -- TODO: consider using a better way to render "both" colorschemes
-  for _, cs in ipairs(rows) do
-    if cs.bg_type == "both" then
-      local cs_dark, cs_light = vim.deepcopy(cs), vim.deepcopy(cs)
-      cs_dark.bg_type, cs_light.bg_type = "dark", "light"
-      table.insert(cs_rows, cs_dark)
-      table.insert(cs_rows, cs_light)
-    else
-      table.insert(cs_rows, cs)
-    end
-  end
-
-  -- 2. calculate line texts and extmarks
+  cs_rows = rows_for(repo)
   hl_seq = 0
+
   local buf, win = cs_pane.buf, cs_pane.win
   local width = vim.api.nvim_win_get_width(win)
-
   local lines, marks = {}, {}
-  for i, r in ipairs(cs_rows) do
-    assert(r.bg_type ~= "both")
-    local text, row_marks = build_cs_row(i - 1, r, width, r.bg_type)
+  for i, row in ipairs(cs_rows) do
+    local text, row_marks = build_cs_row(i - 1, row, width)
     lines[i] = text
     vim.list_extend(marks, row_marks)
   end
 
-  -- 3. render with lines and marks
   vim.bo[buf].modifiable = true
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
   vim.api.nvim_win_set_hl_ns(win, ns)
-  for _, m in ipairs(marks) do
-    vim.api.nvim_buf_set_extmark(
-      buf, ns, m[1], m[2], {
-        end_col = m[3],
-        hl_group = m[4],
-        priority = m[5] or 0,
-      }
-    )
+  for _, mark in ipairs(marks) do
+    vim.api.nvim_buf_set_extmark(buf, ns, mark[1], mark[2], {
+      end_col = mark[3], hl_group = mark[4], priority = mark[5] or 0,
+    })
   end
   vim.bo[buf].modifiable = false
-
   vim.wo[win].wrap = false
   vim.wo[win].cursorline = true
 end
 
-local function setup_repo_list(buf, win)
-  local rows = vim.tbl_values(data.get_repos())
+---@param buf integer
+---@param win integer
+local function render_repo_list(buf, win)
+  repo_rows = vim.tbl_values(data.repos())
+  table.sort(repo_rows, function(a, b) return a.stars > b.stars end)
+
   local width = vim.api.nvim_win_get_width(win)
   local lines = {}
-  -- Sort repos by stars.
-  -- TODO: add more sorting options
-  table.sort(rows, function(a, b)
-    return a.stars > b.stars
-  end)
-  repo_rows = rows
-
   for i, repo in ipairs(repo_rows) do
-    local stars_text = "★ " .. repo.stars
-    local name_text = repo.name
-    if #name_text + #stars_text > width then
-      name_text = name_text:sub(1, width - #stars_text - 3) .. ".."
-    end
-    local pad = (" "):rep(math.max(0, width - #name_text - #stars_text))
-    lines[i] = name_text .. pad .. stars_text
+    local stars = "★ " .. repo.stars
+    local name = truncate(repo.name, width - vim.fn.strdisplaywidth(stars) - 1)
+    local pad = (" "):rep(math.max(0,
+      width - vim.fn.strdisplaywidth(name) - vim.fn.strdisplaywidth(stars)))
+    lines[i] = name .. pad .. stars
   end
 
   vim.bo[buf].modifiable = true
@@ -174,15 +154,20 @@ local function setup_repo_list(buf, win)
   vim.wo[win].cursorline = true
 end
 
-function M.setup_list(repo_buf, repo_win, cs_buf, cs_win)
-  repo_pane = {buf = repo_buf, win = repo_win}
-  cs_pane = {buf = cs_buf, win = cs_win}
+---@param repo_buf integer
+---@param repo_win integer
+---@param cs_buf integer
+---@param cs_win integer
+function M.setup(repo_buf, repo_win, cs_buf, cs_win)
+  repo_pane = { buf = repo_buf, win = repo_win }
+  cs_pane = { buf = cs_buf, win = cs_win }
+  prev_repo = nil -- fresh panel: force the colorscheme list to re-render
 
-  setup_repo_list(repo_buf, repo_win)
-
+  render_repo_list(repo_buf, repo_win)
   vim.api.nvim_set_current_win(repo_win)
 end
 
+--- Re-render the colorscheme list when the selected repo changes.
 function M.sync()
   local repo = M.current_repo()
   if repo == prev_repo then return end

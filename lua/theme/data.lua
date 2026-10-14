@@ -1,32 +1,48 @@
--- Hl.json layout (offline dataset built by scripts/build_hljson.py):
+-- Offline dataset lua/theme/hl.json, harvested by scripts/build_hljson.py.
 --
--- { name: Repo }
+--   { [repo] = Repo }
 --
--- Repo = { name: "owner/repo", stars: int, description: string,
---          num_colorschemes: int, colorschemes: { name: Colorscheme } }
--- 
--- Colorscheme = { name: string, repo: string,
---                 bg_type: "light"|"dark"|"both",
---                 hlgs_light: (Hlg?)[?], hlgs_dark: (Hlg?)[?] }
+--   Repo        = { name, default_branch, stars, description, num_colorschemes,
+--                   colorschemes = { [name] = Colorscheme } }
+--   Colorscheme = { name, repo, bg_type, hlgs = { light = HighlightGroups?,
+--                                                  dark  = HighlightGroups? } }
+--
+-- Only repos whose colorschemes could be sampled are present.
+
+---@class HighlightGroup : vim.api.keyset.highlight
+---@alias HighlightGroups table<string, HighlightGroup>
+---@alias BgType "light"|"dark"|"both"
+---@class Colorscheme
+---@field name string
+---@field repo string
+---@field bg_type BgType
+---@field hlgs table<"light"|"dark", HighlightGroups>
+---@class Repo
+---@field name string "owner/repo"
+---@field default_branch string
+---@field stars number
+---@field description string
+---@field num_colorschemes number
+---@field colorschemes table<string, Colorscheme>
 
 local M = {}
 
 ---@type table<string, Repo>
 local repos = {}
+--- colorscheme name -> its record, for previews keyed by theme name only
+---@type table<string, Colorscheme>
+local by_name = {}
 local loaded = false
 
-local function ensure_load_hldata()
+local function load()
   if loaded then return end
+  loaded = true
 
   local path = vim.api.nvim_get_runtime_file("lua/theme/hl.json", false)[1]
-  local handle = io.open(path, "rb")
-  if not handle then
-    return
-  end
-  local data = handle:read("*a")
-  handle:close()
-
-  local ok, doc = pcall(vim.json.decode, data)
+  local file = path and io.open(path, "rb")
+  if not file then return end
+  local ok, doc = pcall(vim.json.decode, file:read("*a"))
+  file:close()
   if not ok then
     vim.notify("theme: failed to parse hl.json: " .. tostring(doc),
       vim.log.levels.WARN)
@@ -34,25 +50,28 @@ local function ensure_load_hldata()
   end
 
   repos = doc
-
-  loaded = true
+  for _, repo in pairs(repos) do
+    for _, colorscheme in pairs(repo.colorschemes) do
+      by_name[colorscheme.name] = by_name[colorscheme.name] or colorscheme
+    end
+  end
 end
 
---- Query colorscheme highlight groups for one background
----@param repo string
+--- Highlight groups of a colorscheme (looked up by name), for one background.
+--- Falls back to the colorscheme's own background when the asked one is absent.
 ---@param name string
 ---@param background "light"|"dark"
----@return HighlightGroup?
-function M.query_hl(repo, name, background)
-  ensure_load_hldata()
-  if not repos[repo] then return nil end
-  if not repos[repo].colorschemes[name] then return nil end
-  return repos[repo].colorschemes[name].hlgs[background]
+---@return HighlightGroups?
+function M.query_hl(name, background)
+  load()
+  local colorscheme = by_name[name]
+  if not colorscheme then return nil end
+  return colorscheme.hlgs[background] or colorscheme.hlgs[colorscheme.bg_type]
 end
 
 ---@return table<string, Repo>
-function M.get_repos()
-  ensure_load_hldata()
+function M.repos()
+  load()
   return repos
 end
 

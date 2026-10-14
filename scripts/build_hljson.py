@@ -1,13 +1,14 @@
 # Hl.json data layout (consumed by lua/theme/data.lua):
 #
-# { name: Repo }
+# { repo_name: Repo }
 #
-# Repo = { name: "owner/repo", stars: int, description: string,
-#          num_colorschemes: int, colorschemes: { name: Colorscheme } }
-# 
+# Repo = { name: "owner/repo", default_branch: string, stars: int,
+#          description: string, num_colorschemes: int,
+#          colorschemes: { cs_name: Colorscheme } }
+#
 # Colorscheme = { name: string, repo: string,
 #                 bg_type: "light"|"dark"|"both",
-#                 hlgs_light: (Hlg?)[?], hlgs_dark: (Hlg?)[?] }
+#                 hlgs: { "light"?: Hlgs, "dark"?: Hlgs } }
 
 import re
 import http.client

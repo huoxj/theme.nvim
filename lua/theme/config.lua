@@ -1,22 +1,18 @@
 local M = {}
 
-M.defaults = {
-  opts = {
-    random_pool = {
-      -- '#all: all themes in rtp; #builtin: vim builtin themes'
-      include = { '#all' },
-      exclude = {}
-    }
-  }
+local DEFAULTS = {
+  random_pool = {
+    -- '#all': every theme on runtimepath; '#builtin': Neovim's own themes
+    include = { "#all" },
+    exclude = {},
+  },
 }
 
-M.opts = vim.deepcopy(M.defaults.opts)
+M.opts = vim.deepcopy(DEFAULTS)
 
+---@param opts? { random_pool?: { include?: string[], exclude?: string[] } }
 function M.setup(opts)
-  M.opts = vim.tbl_deep_extend(
-    "force", vim.deepcopy(M.defaults.opts), opts or {}
-  )
+  M.opts = vim.tbl_deep_extend("force", vim.deepcopy(DEFAULTS), opts or {})
 end
 
 return M
-
