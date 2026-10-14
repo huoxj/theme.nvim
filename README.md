@@ -4,9 +4,9 @@
 
 ## Features
 
-- 🗃️ Built-in theme manager to install, switch and preview themes from github
+- 🗃️ Browse and preview themes from github, and switch between installed ones
 - 🎲 Random theme on startup with customizable options
-- ⏰ Auto light/dark theme detect and switching based on system time
+- ⏰ Auto light/dark theme detect and switching based on system time (planned)
 
 ## Installation
 
@@ -23,6 +23,17 @@ return {
 ```
 
 ## Usage
+
+### Commands
+
+| Command | Description |
+| --- | --- |
+| `:Theme` | Open the theme panel: browse repos and preview colorschemes live. |
+| `:Theme random` | Apply a random theme from the random pool. |
+| `:Telescope themes` | Pick from every theme on `runtimepath` (requires telescope.nvim). |
+
+The panel previews colorschemes without changing your active one; it does not
+apply a theme yet (see [WIP](#wip)).
 
 ### Customize random theme pool
 

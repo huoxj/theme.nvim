@@ -1,0 +1,71 @@
+# AGENTS.md
+
+Orientation for AI maintainers working in this repository.
+
+## What this is
+
+theme.nvim is a Neovim colorscheme manager: it applies a random theme at
+startup, and provides a floating panel and a telescope picker for browsing and
+live-previewing themes. Neovim 0.11+ is required. `telescope.nvim` is the only
+optional dependency and is needed only for the picker.
+
+## Layout
+
+```
+lua/theme/init.lua          setup(opts) + command(args); VimEnter random apply
+lua/theme/config.lua        options only (random_pool.{include,exclude})
+lua/theme/pool.lua          rtp scan + #tag/name resolution + random pick
+lua/theme/data.lua          lazy hl.json load + schema annotations + by-name index
+lua/theme/colorscheme.lua   apply(name) pcall + current()
+lua/theme/preview.lua       fill(buf) + tint(win, hlgs), shared by picker and panel
+lua/theme/preview_code.lua  sample Lua source (pure data)
+lua/theme/picker.lua        telescope picker
+lua/theme/ui/init.lua       float panel: layout/open/close/focus/debounce
+lua/theme/ui/list.lua       repo list + colorscheme list rendering
+lua/telescope/_extensions/theme.lua   telescope extension registration
+plugin/theme.lua            :Theme user command + completion
+scripts/build_hljson.py     offline harvester (GitHub -> headless nvim -> hl.json)
+scripts/sample.lua          sampling script run inside headless nvim
+lua/theme/hl.json           GENERATED dataset (~1.2 MB) — do not hand-edit
+docs/architecture.md        module map, data flow, invariants, headless testing
+```
+
+## Commands
+
+| Command | Behavior |
+| --- | --- |
+| `:Theme` | Open the floating panel (browse repos, preview colorschemes live). |
+| `:Theme random` | Apply a random theme from the random pool. |
+| `:Telescope themes` | Pick a theme from every theme on `runtimepath` (needs telescope). |
+
+User configuration is `require("theme").setup({ random_pool = { include = …, exclude = … } })`,
+where entries are theme names or the tags `#all` / `#builtin`.
+
+## Where the invariants live
+
+Read `docs/architecture.md` before changing behavior — it holds the full
+module map, data flow, and the numbered invariants/gotchas. The short version:
+
+- **`lua/theme/hl.json` is generated.** Rebuild it with
+  `python3 scripts/build_hljson.py`; never hand-edit it. Its schema is
+  documented by the header comment in `scripts/build_hljson.py` and the
+  `---@class` block in `lua/theme/data.lua` — keep both in sync.
+- The random pool is **set semantics** (`include − exclude − current`, deduped);
+  duplicates must not change pick probability.
+- `data.lua`'s by-name index is **first-repo-wins** on name collisions.
+- The panel is **preview-only by design** — there is no apply key. See the
+  README WIP list; do not "fix" this without a deliberate decision.
+- Previews never apply a colorscheme; they write to a window-local highlight
+  namespace.
+
+## Editing rules
+
+- One responsibility per module, plain `local M = {}` … `return M`, no
+  defensive wrappers or speculative abstractions. This codebase was
+  deliberately refactored to be small; keep it that way.
+- Keep `plugin/theme.lua` a thin command wrapper; dispatch logic belongs in
+  `lua/theme/init.lua`.
+- Do not add dependencies. `telescope.nvim` is optional at runtime — nothing
+  outside `picker.lua` and the telescope extension may require it.
+- Verify changes headlessly before claiming success; see the "Headless testing"
+  section of `docs/architecture.md` for the exact invocation patterns.
