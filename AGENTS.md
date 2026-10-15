@@ -20,8 +20,10 @@ lua/theme/colorscheme.lua   apply(name) pcall + current()
 lua/theme/preview.lua       fill(buf) + tint(win, hlgs), shared by picker and panel
 lua/theme/preview_code.lua  sample Lua source (pure data)
 lua/theme/picker.lua        telescope picker
-lua/theme/ui/init.lua       float panel: layout/open/close/focus/debounce
-lua/theme/ui/list.lua       repo list + colorscheme list rendering
+lua/theme/ui/init.lua       panel: layout/open/close, focus model, keymaps
+lua/theme/ui/render.lua     float-pane plumbing: Line builder, paint, swatches
+lua/theme/ui/chrome.lua     panel highlight groups + winhighlight mapping
+lua/theme/ui/list.lua       repo/colorscheme rows, readme preview body, hint bar
 lua/telescope/_extensions/theme.lua   telescope extension registration
 plugin/theme.lua            :Theme user command + completion
 scripts/build_hljson.py     offline harvester (GitHub -> headless nvim -> hl.json)
@@ -55,6 +57,9 @@ module map, data flow, and the numbered invariants/gotchas. The short version:
 - `data.lua`'s by-name index is **first-repo-wins** on name collisions.
 - The panel is **preview-only by design** — there is no apply key. See the
   README WIP list; do not "fix" this without a deliberate decision.
+- The panel is three bordered panes (Repos, Colorschemes, Preview) over a
+  backdrop, with an explicit focus model: `Tab`/`S-Tab` cycle the two lists,
+  `1`/`2`/`0` jump by number, and the preview (`0`) is read mode.
 - Previews never apply a colorscheme; they write to a window-local highlight
   namespace.
 

@@ -70,6 +70,6 @@ Any suggestions and contributions are welcome. Feel free to open an issue or sub
 - [x] Startup random theme
 - [ ] Like/dislike theme
 - [ ] Theme switching panel
-- [ ] Github theme browser & previewer
+- [x] Github theme browser & previewer
 - [ ] Light/dark theme detection & time-based switching
 

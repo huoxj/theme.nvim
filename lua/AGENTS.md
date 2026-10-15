@@ -43,18 +43,34 @@ invariants; this file is the editing checklist.
   stable within a session).
 - **Previews never apply a colorscheme.** `preview.tint` writes into the
   `theme_preview` namespace and sets it as the target window's highlight
-  namespace. `preview.fill` is the only writer of the sample buffer.
-- **`ui/init.lua` is a singleton:** module-level `active` panel and a
-  module-level `vim.uv` timer. `M.close(p)` requires the panel table — it does
-  not fall back to `active`, so `M.close()` with no argument is a no-op. Close
-  only through the buffer keymaps or the `WinClosed` autocmd, which pass `p`.
-- **`ui/list.lua` must reset `prev_repo` in `setup()`**, otherwise reopening the
-  panel with the same first repo selected leaves the colorscheme list empty.
+  namespace. `preview.fill` is the only writer of the *sample* buffer; the
+  panel's readme view writes its own lines into the same pane buffer and stops
+  the lua treesitter highlighter first.
+- **`ui/init.lua` is a singleton:** module-level `active` panel. `M.close(p)`
+  requires the panel table — it does not fall back to `active`, so `M.close()`
+  with no argument is a no-op. The panel state holds `state.panes` (repos, cs,
+  preview) plus `state.hint` and `state.backdrop`; there is no frame window and
+  no debounce timer. Close only through the buffer keymaps or the `WinClosed`
+  autocmd, which pass `p`.
+- **`ui/list.lua` must reset `prev_repo` in `reset()` (called from `open()`)**,
+  otherwise reopening the panel with the same first repo selected leaves the
+  colorscheme list empty. `sync(repo)` gates the re-render on the repo changing.
+- **The focus model is explicit.** `<Tab>`/`<S-Tab>` cycle only the two lists;
+  `1`/`2`/`0` jump by number, and `0` (the preview) is read mode — focusing it
+  must not change the preview's content or title. `M.follow` only re-evaluates
+  the preview when the focused pane is a list.
 - **The panel has no apply key** — preview only. This mirrors the README WIP
   list; treat it as intentional.
 - **`"both"` colorschemes produce two rows** (dark + light) in `ui/list.lua`.
-- **`ui/list.lua` extmark columns are byte offsets** while padding uses display
-  width; `GLYPH` is 3 bytes / 1 cell. Keep the two coordinate systems separate.
+- **`ui/render.lua` extmark columns are byte offsets** while padding uses display
+  width; the swatch glyph (`∙`, U+2219) is 3 bytes / 1 cell. Keep the two
+  coordinate systems separate, and mint swatch groups per render inside the
+  pane's namespace (skipping groups with neither fg nor bg).
+- **Panel chrome is derived from the active colorscheme** (`ui/chrome.lua`,
+  `ThemeUI*` groups). The tinted preview is the only pane that borrows another
+  theme's colors, and its `Normal` stays out of `winhighlight` while tinted.
+- **`repo.readme` is optional**; the panel falls back to the wrapped
+  `description`. Keep both shapes working.
 
 ## Verifying changes
 
@@ -64,6 +80,6 @@ Run the module smoke test and the panel cycle from `docs/architecture.md`:
 nvim --headless -u NONE -c 'set rtp+=.' -c 'lua
 for _, m in ipairs({"theme","theme.config","theme.pool","theme.data",
   "theme.colorscheme","theme.preview","theme.preview_code","theme.ui",
-  "theme.ui.list"}) do require(m) end
+  "theme.ui.render","theme.ui.chrome","theme.ui.list"}) do require(m) end
 print("modules ok")' -c 'qa!'
 ```

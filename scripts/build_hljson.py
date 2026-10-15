@@ -3,12 +3,16 @@
 # { repo_name: Repo }
 #
 # Repo = { name: "owner/repo", default_branch: string, stars: int,
-#          description: string, num_colorschemes: int,
+#          description: string, num_colorschemes: int, readme: string,
 #          colorschemes: { cs_name: Colorscheme } }
 #
 # Colorscheme = { name: string, repo: string,
 #                 bg_type: "light"|"dark"|"both",
 #                 hlgs: { "light"?: Hlgs, "dark"?: Hlgs } }
+#
+# readme is the repo's README text, verbatim, capped at README_MAX characters
+# ("" when the repo ships none). The panel shows it in the repo preview and
+# falls back to the wrapped description for datasets built without it.
 
 import re
 import http.client
@@ -57,6 +61,7 @@ class ThemeRepo:
     stars: int = 0
     description: str = ""
     num_colorschemes: int = 0
+    readme: str = ""
     colorschemes: dict[str, Colorscheme] = field(default_factory=dict)
 
 
@@ -93,6 +98,21 @@ QUERIES_KEYWORDS = (
 SINGLE_KEYWORD_CUTOFF = 1000
 REPO_STARS_THRESHOLD = 50
 LUA_SCRIPT = Path(__file__).parent / "sample.lua"
+
+# README candidates, most-preferred first, and the character cap on what is
+# kept.
+README_NAMES = ("README.md", "README.rst", "README", "readme.md")
+README_MAX = 8000
+
+
+def read_readme(repo_dir: Path) -> str:
+    """The repo's README text, verbatim, capped at README_MAX characters."""
+    for name in README_NAMES:
+        path = repo_dir / name
+        if path.is_file():
+            return path.read_text(
+                encoding="utf-8", errors="replace")[:README_MAX]
+    return ""
 
 
 def fetch(query: str, page: int) -> dict:
@@ -240,13 +260,15 @@ def detect_background(hlgs: HighlightGroups) -> Background:
         )
 
     bg_lumas = sorted(
-        lu for lu in (luma(g.get("bg")) for g in hlgs.values()) if lu is not None
+        lu for lu in (luma(g.get("bg")) for g in hlgs.values())
+        if lu is not None
     )
     if bg_lumas:
         return "light" if bg_lumas[len(bg_lumas) // 2] > 128 else "dark"
 
     fg_lumas = sorted(
-        lu for lu in (luma(g.get("fg")) for g in hlgs.values()) if lu is not None
+        lu for lu in (luma(g.get("fg")) for g in hlgs.values())
+        if lu is not None
     )
     if fg_lumas:
         return "dark" if fg_lumas[len(fg_lumas) // 2] > 128 else "light"
@@ -300,9 +322,12 @@ def resolve_theme_repos(repos: list[ThemeRepo]):
         )
         with tempfile.TemporaryDirectory() as tmpdir:
             try:
-                repo_dir = download(repo.name, repo.default_branch, Path(tmpdir))
+                repo_dir = download(
+                    repo.name, repo.default_branch, Path(tmpdir)
+                )
                 if repo_dir is None:
                     continue
+                repo.readme = read_readme(repo_dir)
                 colorschemes = extract_colorschmes(repo.name, repo_dir)
                 resolved += 1
                 total_colorschemes += len(colorschemes)

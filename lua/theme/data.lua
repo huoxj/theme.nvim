@@ -3,9 +3,13 @@
 --   { [repo] = Repo }
 --
 --   Repo        = { name, default_branch, stars, description, num_colorschemes,
---                   colorschemes = { [name] = Colorscheme } }
+--                   readme, colorschemes = { [name] = Colorscheme } }
 --   Colorscheme = { name, repo, bg_type, hlgs = { light = HighlightGroups?,
 --                                                  dark  = HighlightGroups? } }
+--
+-- `readme` is the repo's README text (capped by the harvester). Datasets built
+-- before the field existed simply omit it; the panel then falls back to the
+-- wrapped `description`.
 --
 -- Only repos whose colorschemes could be sampled are present.
 
@@ -23,6 +27,7 @@
 ---@field stars number
 ---@field description string
 ---@field num_colorschemes number
+---@field readme string? README text; absent in datasets built before the field
 ---@field colorschemes table<string, Colorscheme>
 
 local M = {}

@@ -43,6 +43,9 @@ with the sampler and are not reproducible.
 
 - Downloads each repo's tarball from `codeload.github.com` into a temp dir
   (network errors retry every 5 s; an HTTP error such as 404 skips the repo).
+- Captures the repo's README text into `repo.readme` (first of `README.md`,
+  `README.rst`, `README`, `readme.md`; capped at `README_MAX` = 8000 chars, `""`
+  when none). The panel shows it in the repo preview.
 - Colorscheme names come from `colors/*.{vim,lua}` (basename, no extension).
 - Each name is sampled once per forced background (`light`, `dark`).
 - A colorscheme that fails to sample (non-zero exit, missing markers, bad JSON)

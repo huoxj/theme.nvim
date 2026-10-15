@@ -14,10 +14,17 @@ function M.fill(buf)
 end
 
 --- Tint a window with highlight groups, leaving the active colorscheme alone.
+--- `frame` (name -> attrs) restates panel chrome groups in the namespace so
+--- the window's border/title keep the panel's colors instead of the previewed
+--- theme's.
 ---@param win integer
 ---@param hlgs HighlightGroups?
-function M.tint(win, hlgs)
+---@param frame table<string, vim.api.keyset.highlight>?
+function M.tint(win, hlgs, frame)
   for group, attrs in pairs(hlgs or {}) do
+    vim.api.nvim_set_hl(ns, group, attrs)
+  end
+  for group, attrs in pairs(frame or {}) do
     vim.api.nvim_set_hl(ns, group, attrs)
   end
   vim.api.nvim_win_set_hl_ns(win, ns)
