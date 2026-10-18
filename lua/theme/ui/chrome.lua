@@ -9,11 +9,13 @@ local M = {}
 local FALLBACK = {
   fg = 0xc0caf5, bg = 0x1a1b26, sel = 0x292e42,
   accent = 0x7aa2f7, dim = 0x565f89, border = 0x3b4261, hint = 0x1f2335,
+  warn = 0xe0af68,
 }
 
 -- Foreground-only runs that sit inside the selection bar.
 local SEGMENTS = { "ThemeUIName", "ThemeUIStar", "ThemeUIDim",
-  "ThemeUITag", "ThemeUIAccent" }
+  "ThemeUITag", "ThemeUIAccent", "ThemeUIOurs", "ThemeUIElsewhere",
+  "ThemeUIWarn" }
 
 ---@param name string
 ---@return vim.api.keyset.highlight
@@ -28,6 +30,7 @@ function M.apply()
   local accent = hl("Title").fg or hl("WinSeparator").fg or FALLBACK.accent
   local dim = hl("LineNr").fg or hl("NonText").fg or FALLBACK.dim
   local border = hl("NonText").fg or hl("LineNr").fg or FALLBACK.border
+  local warn = hl("DiagnosticWarn").fg or hl("WarningMsg").fg or FALLBACK.warn
   -- CursorLine rather than Visual/PmenuSel: those two are already swatch
   -- chips, so reusing them would make a swatch vanish on the selected row.
   local sel = hl("CursorLine").bg or hl("Visual").bg or FALLBACK.sel
@@ -49,6 +52,10 @@ function M.apply()
   set(0, "ThemeUITag", { fg = dim })
   set(0, "ThemeUIAccent", { fg = accent })
   set(0, "ThemeUICode", { fg = accent })
+  -- Install-state chips on the repo rows (ours / elsewhere / shadow).
+  set(0, "ThemeUIOurs", { fg = accent })
+  set(0, "ThemeUIElsewhere", { fg = dim })
+  set(0, "ThemeUIWarn", { fg = warn })
   set(0, "ThemeUIBackdrop", { bg = pane_bg })
   set(0, "ThemeUIHint", { fg = status.fg or pane_fg, bg = hint_bg })
 
