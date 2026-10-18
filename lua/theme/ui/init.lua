@@ -11,6 +11,8 @@ local render = require("theme.ui.render")
 local list = require("theme.ui.list")
 local chrome = require("theme.ui.chrome")
 local preview = require("theme.preview")
+local install = require("theme.install")
+local cs = require("theme.colorscheme")
 
 local B = 1             -- border cost per side of a bordered float
 local GAP_X = 1         -- blank columns between the left column and the preview
@@ -20,9 +22,24 @@ local MIN_PREVIEW_W = 24
 local LIST_PANES = { 1, 2 }
 -- The pane number shown in each border title, and the key that jumps to it.
 local PANE_NUM = { "1", "2", "0" }
-local PANE_TITLE = { "Repos", "Colorschemes", "Preview" }
+-- Pane 1's title is its view tab strip (see view_title); the other two are
+-- fixed names.
+local PANE_TITLE = { [2] = "Colorschemes", [3] = "Preview" }
+-- The views the repos pane cycles through, in tab order.
+local VIEWS = { "browse", "managed" }
 
 local active = nil
+
+--- The repos pane's title doubles as a tab strip: the active view is the
+--- bracketed one, so the title says both what the pane holds and what `[`/`]`
+--- would switch to.
+---@param view "browse"|"managed"
+---@return string
+local function view_title(view)
+  local browse = view == "browse" and "[Browse]" or "Browse"
+  local managed = view == "managed" and "[Managed]" or "Managed"
+  return " [1] " .. browse .. " " .. managed .. " "
+end
 
 --------------------------------------------------------------------- geometry
 ---@param min_left_w integer content width the widest list row needs
@@ -147,30 +164,50 @@ function M.sync_preview(state, src)
   if not vim.api.nvim_win_is_valid(pane.win) then return end
 
   local sel = state.panes[state.preview_src == "repos" and 1 or 2].sel
-  local key = state.preview_src .. ":" .. tostring(sel)
+  -- The view is part of the key: the same index means a different theme in
+  -- each view, so toggling must not leave the previous view's preview up.
+  local key = state.view .. ":" .. state.preview_src .. ":" .. tostring(sel)
   if state.preview_key == key then return end
   state.preview_key = key
 
+  --- Nothing to describe (an empty Managed view): say so, untinted.
+  local function empty()
+    state.preview_tinted = false
+    vim.wo[pane.win].wrap = false
+    pcall(vim.treesitter.stop, pane.buf)
+    render.render_lines(pane, list.build_preview(nil, pane.width, pane.height))
+    return " [0] Preview "
+  end
+
   local title
   if state.preview_src == "repos" then
-    local repo = list.repos()[state.panes[1].sel]
-    state.preview_tinted = false
-    -- Raw markdown reads badly clipped, so the readme window wraps; the code
-    -- sample below stays unwrapped, where clipping a long line is the
-    -- right thing.
-    vim.wo[pane.win].wrap = list.has_readme(repo)
-    -- Drop the lua highlighter the colorscheme view installed, or it would
-    -- color the markdown as if it were code.
-    pcall(vim.treesitter.stop, pane.buf)
-    render.render_lines(pane, list.build_readme(repo, pane.width, pane.height))
-    title = " [0] " .. repo.name .. " "
+    local item = state.panes[1].items[state.panes[1].sel]
+    if not item then
+      title = empty()
+    else
+      state.preview_tinted = false
+      -- Raw markdown reads badly clipped, so the readme window wraps; the code
+      -- sample below stays unwrapped, where clipping a long line is the
+      -- right thing.
+      vim.wo[pane.win].wrap = list.preview_wraps(item)
+      -- Drop the lua highlighter the colorscheme view installed, or it would
+      -- color the markdown as if it were code.
+      pcall(vim.treesitter.stop, pane.buf)
+      render.render_lines(pane,
+        list.build_preview(item, pane.width, pane.height))
+      title = " [0] " .. item.name .. " "
+    end
   else
     local row = state.panes[2].items[state.panes[2].sel]
-    state.preview_tinted = true
-    vim.wo[pane.win].wrap = false
-    preview.fill(pane.buf)
-    preview.tint(pane.win, row.hlgs, chrome.frame())
-    title = " [0] " .. row.name .. " "
+    if not row then
+      title = empty()
+    else
+      state.preview_tinted = true
+      vim.wo[pane.win].wrap = false
+      preview.fill(pane.buf)
+      preview.tint(pane.win, row.hlgs, chrome.frame())
+      title = " [0] " .. row.name .. " "
+    end
   end
 
   vim.api.nvim_win_set_config(pane.win, { title = title, title_pos = "center" })
@@ -179,12 +216,192 @@ function M.sync_preview(state, src)
 end
 
 --------------------------------------------------------------------- actions
---- Re-render the colorscheme pane for `repo`, unless it is already showing it.
+--- The rows the repos pane shows in the current view.
 ---@param state table
----@param repo Repo
-local function render_cs(state, repo)
-  if not list.sync(repo) then return end
-  render.render(state.panes[2], list.cs_rows(repo), 1, list.build_cs)
+---@return table[]
+local function view_items(state)
+  return state.view == "managed" and list.managed() or list.repos()
+end
+
+---@param state table
+---@return fun(item: table, width: integer, selected: boolean): table[]
+local function repo_builder(state)
+  return state.view == "managed" and list.build_managed or list.build_repo
+end
+
+--- Re-render the colorscheme pane for `item`, unless it is already showing it.
+---@param state table
+---@param item Repo|ManagedItem?
+local function render_cs(state, item)
+  if not list.sync(item) then return end
+  local rows = item and list.cs_rows_of(item) or {}
+  render.render(state.panes[2], rows, 1, list.build_cs)
+end
+
+--- Repaint the repo rows in place: install chips change after a job, and a job
+--- can add or remove a Managed-view row.
+---@param state table
+local function render_repos(state)
+  local pane = state.panes[1]
+  local items = view_items(state)
+  if #items == 0 then
+    render.render_lines(pane, list.build_empty(pane.width))
+    return
+  end
+  pane.sel = math.min(pane.sel or 1, #items)
+  render.render(pane, items, pane.sel, repo_builder(state))
+end
+
+--- The selected item of the repos pane, or nil when the view is empty.
+---@param state table
+---@return Repo|ManagedItem?
+local function selected_item(state)
+  return state.panes[1].items[state.panes[1].sel]
+end
+
+--- How `item` is currently provided. Browse rows use the probe cached for
+--- their chips; a Managed row is scanned live, so a theme whose directory
+--- disappeared behind the panel's back cannot be deleted or applied as if it
+--- were still ours.
+---@param state table
+---@param item Repo|ManagedItem
+---@return string?
+local function item_status(state, item)
+  if state.view == "managed" then return install.status(item.name) end
+  return list.statuses()[item.name]
+end
+
+--- Run one job for `item`, ignoring further keys for it while it runs, and
+--- rebuild the lists when it finishes.
+---@param state table
+---@param item Repo|ManagedItem
+---@param fn fun(item: table, done: fun(ok: boolean, err: string?))
+local function job(state, item, fn)
+  local name = item.name
+  if state.jobs[name] then return end
+  state.jobs[name] = true
+  fn(item, function()
+    state.jobs[name] = nil
+    if state.closed then return end
+    list.refresh()
+    list.forget()
+    render_repos(state)
+    render_cs(state, selected_item(state))
+    -- The lists moved under the preview, so redraw it even if the selection
+    -- reads the same.
+    state.preview_key = nil
+    M.sync_preview(state)
+  end)
+end
+
+--- Install the selected repo into theme.nvim's own pack dir.
+---@param state table
+function M.install_repo(state)
+  local item = selected_item(state)
+  if not item then return end
+  -- Every row of the Managed view is already installed; `i` is a Browse key.
+  if state.view == "managed" then
+    return vim.notify(("theme: %s is already installed here"):format(item.name),
+      vim.log.levels.WARN)
+  end
+  local status = item_status(state, item)
+  if status == "elsewhere" then
+    return vim.notify(("theme: %s is already provided by your config")
+      :format(item.name), vim.log.levels.WARN)
+  end
+  if status ~= "none" then
+    return vim.notify(("theme: %s is already installed here"):format(item.name),
+      vim.log.levels.WARN)
+  end
+  job(state, item, function(r, done) install.install(r.name, done) end)
+end
+
+--- Remove theme.nvim's own copy of the selected theme.
+---
+--- `x` is the only key that deletes anything, so it is gated twice over: the
+--- row must be ours (status `ours` or `shadow` -- `shadow` means our copy
+--- exists alongside the user's, and removing ours is exactly the resolution),
+--- and the status is read live in the Managed view. A theme provided only by
+--- the user's own config is never touched: this hands a shadowed theme back to
+--- them and nothing else.
+---@param state table
+function M.uninstall_repo(state)
+  local item = selected_item(state)
+  if not item then return end
+  local status = item_status(state, item)
+  if status ~= "ours" and status ~= "shadow" then
+    return vim.notify(
+      ("theme: %s is not ours \u{2014} nothing was removed"):format(item.name),
+      vim.log.levels.WARN)
+  end
+  job(state, item, function(r, done) install.uninstall(r.name, done) end)
+end
+
+--- Re-clone theme.nvim's own copy of the selected theme.
+---@param state table
+function M.update_repo(state)
+  local item = selected_item(state)
+  if not item then return end
+  -- Updating means re-cloning from the theme's own repo, which we only know
+  -- for themes the dataset carries. A clone we cannot place is left alone.
+  if state.view == "managed" and not item.repo then
+    return vim.notify(("theme: %s is not in the theme index \u{2014} update it "
+      .. "where you got it"):format(item.name), vim.log.levels.WARN)
+  end
+  local status = item_status(state, item)
+  if status ~= "ours" and status ~= "shadow" then
+    return vim.notify(("theme: %s is not installed here"):format(item.name),
+      vim.log.levels.WARN)
+  end
+  job(state, item, function(r, done) install.update(r.name, done) end)
+end
+
+--- Apply the selected colorscheme, but only when its theme is installed: an
+--- uninstalled theme is not on the runtimepath, so it cannot be applied.
+---@param state table
+function M.apply_cs(state)
+  local item = selected_item(state)
+  local row = state.panes[2].items[state.panes[2].sel]
+  if not item or not row then return end
+  local status = item_status(state, item)
+  if status == "ours" or status == "shadow" then
+    cs.apply(row.name)
+  else
+    vim.notify(("theme: %s is not installed \u{2014} press i on its repo first")
+      :format(row.name), vim.log.levels.WARN)
+  end
+end
+
+--- Switch the repos pane between the harvested catalogue and our own pack dir,
+--- keeping the focus where it is: the view changes what both lists show, so it
+--- is reachable from either of them.
+---@param state table
+---@param view "browse"|"managed"
+function M.set_view(state, view)
+  if state.view == view then return end
+  state.view = view
+  state.panes[1].sel = 1
+  list.forget()
+  vim.api.nvim_win_set_config(state.panes[1].win, {
+    title = view_title(view), title_pos = "center",
+  })
+  render.render_lines(state.hint,
+    list.build_hint(state.geo.hint.width, view))
+  render_repos(state)
+  render_cs(state, selected_item(state))
+  M.sync_preview(state)
+end
+
+--- `[` / `]`: walk the repos pane's views, wrapping at either end. With two
+--- views both keys are a toggle; the direction is kept for the tab metaphor.
+---@param state table
+---@param dir integer
+function M.cycle_view(state, dir)
+  local at = 1
+  for i, view in ipairs(VIEWS) do
+    if view == state.view then at = i end
+  end
+  M.set_view(state, VIEWS[((at - 1 + dir) % #VIEWS) + 1])
 end
 
 ---@param state table
@@ -206,8 +423,8 @@ function M.move(state, delta)
   local sel = ((pane.sel - 1 + delta) % n) + 1
   if sel ~= pane.sel then
     if pane.kind == "repos" then
-      render.render(pane, pane.items, sel, list.build_repo)
-      render_cs(state, list.repos()[sel])
+      render.render(pane, pane.items, sel, repo_builder(state))
+      render_cs(state, pane.items[sel])
     else
       render.render(pane, pane.items, sel, list.build_cs)
     end
@@ -238,6 +455,20 @@ local function map_keys(state)
     map(pane.buf, "q", function() M.close(state) end)
     map(pane.buf, "<Esc>", function() M.close(state) end)
   end
+  -- The view tabs are pane-level, like Tab, so they work from either list.
+  for _, i in ipairs(LIST_PANES) do
+    local buf = state.panes[i].buf
+    map(buf, "[", function() M.cycle_view(state, -1) end)
+    map(buf, "]", function() M.cycle_view(state, 1) end)
+  end
+  -- Manage keys live on the repo list only. Applying belongs to the
+  -- COLORSCHEME list only: the thing being applied is a colorscheme, not a
+  -- repo, so `<CR>` on a repo row does nothing.
+  local repos = state.panes[1].buf
+  map(repos, "i", function() M.install_repo(state) end)
+  map(repos, "x", function() M.uninstall_repo(state) end)
+  map(repos, "u", function() M.update_repo(state) end)
+  map(state.panes[2].buf, "<CR>", function() M.apply_cs(state) end)
 end
 
 ---@return table
@@ -251,8 +482,11 @@ function M.open()
   local geo = M.layout(list.min_left_width())
   local state = {
     closed = false, focus = 1, panes = {}, geo = geo,
+    -- "browse" is the harvested catalogue (the default); "managed" is our own
+    -- pack dir. Both drive the same repos pane.
+    view = "browse",
     preview_src = "repos", preview_tinted = false, preview_key = nil,
-    origin = vim.api.nvim_get_current_win(),
+    origin = vim.api.nvim_get_current_win(), jobs = {},
   }
 
   -- Backdrop first: it sits behind everything and dims the editor behind
@@ -271,8 +505,10 @@ function M.open()
     state.panes[i] = render.new_pane({
       kind = key, row = g.row, col = g.col, width = g.width, height = g.height,
       -- The title carries the pane's number, so the number keys are
-      -- discoverable without reading the hint bar.
-      title = " [" .. PANE_NUM[i] .. "] " .. PANE_TITLE[i] .. " ",
+      -- discoverable without reading the hint bar. Pane 1's title is its view
+      -- tab strip instead of a fixed name.
+      title = i == 1 and view_title(state.view)
+        or (" [%s] %s "):format(PANE_NUM[i], PANE_TITLE[i]),
     })
   end
 
@@ -284,11 +520,26 @@ function M.open()
   })
   vim.wo[state.hint.win].winhighlight =
     "Normal:ThemeUIHint,EndOfBuffer:ThemeUIHint"
-  render.render_lines(state.hint, list.build_hint(hg.width))
+  render.render_lines(state.hint, list.build_hint(hg.width, state.view))
 
   list.reset()
-  render.render(state.panes[1], list.repos(), 1, list.build_repo)
-  render_cs(state, list.repos()[1])
+  state.panes[1].sel = 1
+  render_repos(state)
+  render_cs(state, selected_item(state))
+
+  -- A shadowed theme is provided twice; say so once per open and let the user
+  -- decide which copy to keep. The panel never adjudicates.
+  local shadowed = {}
+  for _, repo in ipairs(list.repos()) do
+    if list.statuses()[repo.name] == "shadow" then
+      shadowed[#shadowed + 1] = repo.name
+    end
+  end
+  if #shadowed > 0 then
+    vim.notify("theme: also provided by your config \u{2014} consider "
+      .. "uninstalling one copy: " .. table.concat(shadowed, ", "),
+      vim.log.levels.WARN)
+  end
 
   map_keys(state)
 
