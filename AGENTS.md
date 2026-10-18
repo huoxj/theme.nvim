@@ -17,6 +17,7 @@ lua/theme/config.lua        options only (random_pool.{include,exclude})
 lua/theme/pool.lua          rtp scan + #tag/name resolution + random pick
 lua/theme/data.lua          lazy hl.json load + schema annotations + by-name index
 lua/theme/colorscheme.lua   apply(name) pcall + current()
+lua/theme/install.lua       our pack dir: installed + status + async jobs
 lua/theme/preview.lua       fill(buf) + tint(win, hlgs), shared by picker and panel
 lua/theme/preview_code.lua  sample Lua source (pure data)
 lua/theme/picker.lua        telescope picker
@@ -55,8 +56,19 @@ module map, data flow, and the numbered invariants/gotchas. The short version:
 - The random pool is **set semantics** (`include − exclude − current`, deduped);
   duplicates must not change pick probability.
 - `data.lua`'s by-name index is **first-repo-wins** on name collisions.
-- The panel is **preview-only by design** — there is no apply key. See the
-  README WIP list; do not "fix" this without a deliberate decision.
+- The installer touches **only its own pack dir**
+  (`stdpath("data")/site/pack/theme/start`), clones atomically (temp dir →
+  verify `colors/` → rename, rolling back on any failure), and never writes
+  to the user's own config. Status precedence is
+  **`shadow > ours > elsewhere > none`**; the panel detects conflicts rather
+  than adjudicating them.
+- The panel's only apply path is **`<CR>` on a colorscheme whose theme is
+  installed** (`ours`/`shadow` in Browse, anything in Managed); previews never
+  apply a colorscheme.
+- The Repos list has **two views** (`m` / `b`): Browse (the dataset, with chips)
+  and Managed (our pack dir, joined to the dataset by directory basename, no
+  chips, `i` refused). A theme only on disk shows its directory name, gets its
+  colorscheme rows from its own `colors/`, and refuses `u`.
 - The panel is three bordered panes (Repos, Colorschemes, Preview) over a
   backdrop, with an explicit focus model: `Tab`/`S-Tab` cycle the two lists,
   `1`/`2`/`0` jump by number, and the preview (`0`) is read mode.

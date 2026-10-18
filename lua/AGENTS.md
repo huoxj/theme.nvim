@@ -59,8 +59,18 @@ invariants; this file is the editing checklist.
   `1`/`2`/`0` jump by number, and `0` (the preview) is read mode — focusing it
   must not change the preview's content or title. `M.follow` only re-evaluates
   the preview when the focused pane is a list.
-- **The panel has no apply key** — preview only. This mirrors the README WIP
-  list; treat it as intentional.
+- **The installer owns exactly one tree.** `lua/theme/install.lua` writes only
+  `stdpath("data")/site/pack/theme/start/<repo-basename>`; installs are atomic
+  (clone to `<dir>.tmp-<pid>` → verify `colors/` → `fs_rename`), and every
+  failure path removes the temp dir. It must not require the UI or telescope.
+- **Status precedence is `shadow > ours > elsewhere > none`**, and "provided
+  elsewhere" ignores runtimepath entries under our pack dir and under
+  `$VIMRUNTIME`. The panel detects conflicts, never adjudicates: `elsewhere`
+  blocks `i`, `shadow` is notified once per open, and `x` removes our copy only.
+- **`<CR>` applies a colorscheme only when its repo is installed**
+  (`ours`/`shadow`); the previews themselves still never apply. That is the
+  panel's one apply path — do not widen it without deciding who owns the
+  theme's installation.
 - **`"both"` colorschemes produce two rows** (dark + light) in `ui/list.lua`.
 - **`ui/render.lua` extmark columns are byte offsets** while padding uses display
   width; the swatch glyph (`∙`, U+2219) is 3 bytes / 1 cell. Keep the two
@@ -80,6 +90,7 @@ Run the module smoke test and the panel cycle from `docs/architecture.md`:
 nvim --headless -u NONE -c 'set rtp+=.' -c 'lua
 for _, m in ipairs({"theme","theme.config","theme.pool","theme.data",
   "theme.colorscheme","theme.preview","theme.preview_code","theme.ui",
-  "theme.ui.render","theme.ui.chrome","theme.ui.list"}) do require(m) end
+  "theme.ui.render","theme.ui.chrome","theme.ui.list",
+  "theme.install"}) do require(m) end
 print("modules ok")' -c 'qa!'
 ```

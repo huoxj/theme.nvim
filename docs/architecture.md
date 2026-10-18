@@ -36,13 +36,14 @@ One responsibility per file. Every module is a plain table (`local M = {}` …
 | `lua/theme/pool.lua` | Scans `runtimepath` for themes, resolves pool specs (`#all`, `#builtin`, plain names), computes the random pool, and applies a random theme. |
 | `lua/theme/data.lua` | Lazy-loads `lua/theme/hl.json`, carries the dataset's `---@class` schema annotations, and answers highlight-group queries by colorscheme name. |
 | `lua/theme/colorscheme.lua` | `apply(name)` (pcall + notify, never raises) and `current()` (`vim.g.colors_name`). |
+| `lua/theme/install.lua` | Install/update/uninstall for theme.nvim's own pack dir: `dir`, `installed`, `status`, and the async clone jobs. |
 | `lua/theme/preview.lua` | Shared preview plumbing: `fill(buf)` writes the sample source, `tint(win, hlgs)` paints a window without applying a colorscheme. |
 | `lua/theme/preview_code.lua` | Pure data: the sample Lua source shown in every preview. |
 | `lua/theme/picker.lua` | telescope picker over all themes on `runtimepath` (uses the shared preview). |
 | `lua/theme/ui/init.lua` | Panel lifecycle: layout, open/close, the focus model, keymaps, and preview wiring. |
 | `lua/theme/ui/render.lua` | Generic float-pane plumbing: the `Line` builder, painting, hand-drawn selection/segment extmarks, and the per-render swatch groups. |
 | `lua/theme/ui/chrome.lua` | Panel chrome: highlight groups (palette mined from the active colorscheme) and the `winhighlight` mapping per pane/focus. |
-| `lua/theme/ui/list.lua` | Panel content: stars-sorted repo rows, colorscheme rows (one per variant), the README preview body, and the hint bar. |
+| `lua/theme/ui/list.lua` | Panel content: stars-sorted repo rows, managed-theme rows, colorscheme rows (one per variant), the preview bodies, and the hint bar. |
 | `lua/telescope/_extensions/theme.lua` | Registers the `themes` telescope extension. |
 | `plugin/theme.lua` | Defines the `:Theme` user command and its completion. |
 | `scripts/build_hljson.py` | Offline harvester: GitHub search → tarball → headless sampling → `hl.json`. |
@@ -113,6 +114,29 @@ require("theme").setup(opts)
 | `{ "random" }` | `require("theme.pool").apply_random()` |
 | anything else | `vim.notify(... WARN)` |
 
+### Managing installed themes (`install.lua`)
+
+theme.nvim owns exactly one tree, its own pack dir
+`stdpath("data")/site/pack/theme/start`, and installs there as
+`<repo-basename>`. An install is atomic: `git clone --depth 1` into a sibling
+`<dir>.tmp-<pid>`, verify the clone ships a `colors/` directory, `fs_rename`
+it into place, then `:packadd` it, which puts the clone on `runtimepath` for the
+running editor. Any failure removes the temp dir, so a failed install leaves
+nothing behind. Persistence is free — `pack/*/start` is on `runtimepath` at
+every start, so no `:packadd` is needed after a restart. Update is `rm` +
+re-clone (a shallow pull would miss a deleted or renamed colors file);
+uninstall removes only our own directory. `installed()` is the read side: it
+lists what our pack dir holds, as `{ name, dir }`, skipping clone temp dirs.
+
+`status(repo)` reports how a repo is currently provided, in the precedence
+`shadow` > `ours` > `elsewhere` > `none`: `ours` (our dir exists), `shadow`
+(ours *and* a non-manager runtimepath entry provides the same basename),
+`elsewhere` (only the user's config provides it), `none`. The check ignores
+paths under our pack dir and under `$VIMRUNTIME`. This is **detection, not
+adjudication**: a `shadow` theme is surfaced once per panel open and otherwise
+left alone; the panel refuses to install over `elsewhere`, and uninstalling our
+copy never touches the user's own.
+
 ### Floating panel (`ui/`)
 
 `open()` builds five floats — `backdrop`, `repos`, `cs`, `preview`, `hint` —
@@ -155,6 +179,51 @@ re-renders the colorscheme list through `list.sync()` (the `prev_repo` guard;
 `list.reset()` runs on every open so a reopened panel is never left with an
 empty colorscheme list).
 
+#### Two views of the repo list
+
+`state.view` picks which rows the repos pane holds:
+
+- **Browse** (the default) — the harvested catalogue, one row per dataset repo,
+  with its install chip. `m` switches to Managed.
+- **Managed** — what our own pack dir holds (`install.installed()`). A directory
+  whose name matches a dataset repo is shown under that repo's name and keeps
+  its stars; a theme we only have on disk is shown by directory name alone.
+  There are no chips here (everything listed is ours by construction) and `i` is
+  refused. `b` switches back to Browse.
+
+The pane title follows the view (` [1] Repos ` / ` [1] Managed `) and the hint
+bar names the view its key leads to. Selecting a Managed row renders the
+dataset's colorscheme rows when the dataset knows the theme, and otherwise one
+row per `colors/*.vim|lua` in our clone — without swatches, because an
+unharvested theme has no stored highlights and showing another repo's
+same-named colorscheme would be a guess. An empty Managed view renders a note
+instead of rows, and the preview says the same.
+
+Managing themes happens on the two lists, through buffer-local keys:
+
+- Repos list, Browse: `i` installs the selected repo, `x` uninstalls our copy,
+  `u` updates it. Each job runs async; further `i`/`x`/`u` for the same repo are
+  ignored until it finishes, and the rows are re-rendered (with fresh status
+  chips) when it does.
+- Repos list, Managed: `x` uninstalls, `u` re-clones, and `<CR>` applies the
+  theme's colorscheme — the one selected below it, else the first. `u` needs the
+  theme's repo URL, which we only know for themes the dataset carries; on a
+  theme we cannot place it says so instead of guessing.
+- Colorschemes list: `<CR>` applies the selected colorscheme, but only when its
+  theme is installed (`ours`/`shadow` in Browse, anything in Managed) — an
+  uninstalled theme is not on `runtimepath` and cannot be applied. Otherwise it
+  notifies and applies nothing.
+
+The view switch and every finished job call `list.forget()`, which forces
+`list.sync()` to rebuild the colorscheme pane even when the selected item looks
+unchanged; a finished job also calls `list.refresh()` (fresh statuses and pack
+dir scan) and drops the preview's cache key.
+
+Repo rows carry an install chip before the stars: `✓` (ours, accent), `≡`
+(elsewhere, dim), `⚠` (shadow, warn), blank for `none`. Statuses are probed
+once per open (`list.statuses()`, keyed by repo name) and re-probed after each
+job, so the panel never stats the filesystem per frame.
+
 Chrome groups (`ThemeUI*`) are (re)defined on each open from the user's active
 colorscheme (`Normal`, `Title`, `LineNr`, `CursorLine`, `StatusLine`, `Pmenu`,
 `NonText`), so the panel blends into the current editor; the preview is the only
@@ -184,9 +253,11 @@ plugin usually still runs but silently misbehaves.
    duration of a session. Every colorscheme surface (panel rows and previews,
    picker previews) is name-keyed through `query_hl`, so a collision picks one
    repo's colors and ignores the other.
-4. **The panel previews only; it has no apply key.** This is deliberate, not an
-   oversight: the README WIP list still tracks "theme switching panel". Do not
-   add a select/apply mapping without updating the README and this document.
+4. **The panel's only apply path is `<CR>` on an *installed* colorscheme row.**
+   Previews still never apply anything (invariant 8); `<CR>` is gated on the
+   repo's status being `ours` or `shadow`, so a theme that is not on
+   `runtimepath` cannot be applied and only produces a hint. Do not widen this
+   to arbitrary themes without deciding who owns their installation.
 5. **`"both"` colorschemes render as two rows** in the panel (dark + light), so
    a repo's row count can exceed its colorscheme count.
 6. **Dataset `hlgs` are vim highlight attrs with the cterm fields stripped**
@@ -248,6 +319,41 @@ plugin usually still runs but silently misbehaves.
     (capped at 8000 chars) in `repo.readme`; datasets built before the field
     existed omit it. The panel falls back to the wrapped `description`, so both
     shapes must keep working.
+18. **The installer writes to its own pack dir and nothing else.**
+    `install.dir(repo)` is `stdpath("data")/site/pack/theme/start/<basename>`;
+    `install.uninstall` removes only that directory, and no code path ever
+    writes to a path the user's own config owns.
+19. **Installs are atomic and self-cleaning.** Clone into `<dir>.tmp-<pid>`,
+    verify `colors/`, then `fs_rename` into place; every failure path removes
+    the temp dir, so a failed install leaves neither a partial clone nor a
+    stray temp dir. The clone is async (`vim.system`); the callback runs in a
+    fast event context and does its `vim.*` work after `vim.schedule`.
+20. **`status` precedence is `shadow` > `ours` > `elsewhere` > `none`**, and
+    "provided elsewhere" ignores runtimepath entries under our pack dir and
+    under `$VIMRUNTIME`. The panel only ever detects a conflict: `elsewhere`
+    blocks `i`, `shadow` is notified once per open, and `x` removes our copy
+    only.
+21. **`<CR>` on a colorscheme row is gated on the repo being installed**
+    (`ours`/`shadow`). The panel is otherwise still preview-only.
+22. **The repos pane has two views over one widget.** `state.view` is `"browse"`
+    (the dataset, with chips) or `"managed"` (our pack dir, from
+    `install.installed()`); `m` and `b` switch, the pane title and the hint bar
+    follow, and the view is part of the preview's cache key — the same row index
+    means a different theme in each view. `i` is a Browse key: a Managed row is
+    ours already, so it is refused rather than re-cloned.
+23. **A Managed row is `{ name, dir, repo }`.** `name` is the dataset repo name
+    when the dataset knows a repo of that directory name (joined on the
+    basename, first dataset match wins) and the directory name otherwise;
+    `repo = nil` marks a theme we only have on disk. Such a theme's colorscheme
+    rows come from its own `colors/` and carry no `hlgs` — never borrow another
+    repo's same-named colorscheme — and `u` refuses, because the repo URL it
+    would re-clone from is exactly what is missing.
+24. **`list.forget()` is how the colorscheme pane is forced to re-render.**
+    `sync()` normally skips when the selected item is unchanged (the
+    `prev_repo` guard); `forget()` sets a one-shot `forced` flag that makes the
+    next `sync()` rebuild anyway. Both the view switch and every finished job
+    call it, and `refresh()` (statuses + the pack dir scan) must be cleared by
+    anything that changes the filesystem.
 
 ## Headless testing
 
@@ -278,7 +384,7 @@ nvim --headless -u NONE -c 'set rtp+=.' -c 'lua
 for _, m in ipairs({
   "theme","theme.config","theme.pool","theme.data","theme.colorscheme",
   "theme.preview","theme.preview_code","theme.ui","theme.ui.render",
-  "theme.ui.chrome","theme.ui.list",
+  "theme.ui.chrome","theme.ui.list","theme.install",
 }) do require(m) end
 print("modules ok")' -c 'qa!'
 
