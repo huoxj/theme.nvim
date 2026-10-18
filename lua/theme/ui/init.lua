@@ -365,6 +365,12 @@ function M.apply_cs(state)
   if not item or not row then return end
   local status = item_status(state, item)
   if status == "ours" or status == "shadow" then
+    -- The row IS a background variant: applying it without moving
+    -- vim.o.background would render the theme's other half. Rows without a
+    -- known variant (non-dataset Managed rows) keep the current background.
+    if row.bg ~= "" and vim.o.background ~= row.bg then
+      vim.o.background = row.bg
+    end
     cs.apply(row.name)
   else
     vim.notify(("theme: %s is not installed \u{2014} press i on its repo first")
