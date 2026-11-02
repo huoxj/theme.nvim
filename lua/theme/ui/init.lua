@@ -21,7 +21,7 @@ local MIN_PREVIEW_W = 24
 -- document, not a stop on the focus ring.
 local LIST_PANES = { 1, 2 }
 -- The pane number shown in each border title, and the key that jumps to it.
-local PANE_NUM = { "1", "2", "0" }
+local PANE_NUM = { "1", "2", "3" }
 -- Pane 1's title is its view tab strip (see view_title); the other two are
 -- fixed names.
 local PANE_TITLE = { [2] = "Colorschemes", [3] = "Preview" }
@@ -176,7 +176,7 @@ function M.sync_preview(state, src)
     vim.wo[pane.win].wrap = false
     pcall(vim.treesitter.stop, pane.buf)
     render.render_lines(pane, list.build_preview(nil, pane.width, pane.height))
-    return " [0] Preview "
+    return " [3] Preview "
   end
 
   local title
@@ -195,7 +195,7 @@ function M.sync_preview(state, src)
       pcall(vim.treesitter.stop, pane.buf)
       render.render_lines(pane,
         list.build_preview(item, pane.width, pane.height))
-      title = " [0] " .. item.name .. " "
+      title = " [3] " .. item.name .. " "
     end
   else
     local row = state.panes[2].items[state.panes[2].sel]
@@ -206,7 +206,7 @@ function M.sync_preview(state, src)
       vim.wo[pane.win].wrap = false
       preview.fill(pane.buf)
       preview.tint(pane.win, row.hlgs, chrome.frame())
-      title = " [0] " .. row.name .. " "
+      title = " [3] " .. row.name .. " "
     end
   end
 
@@ -272,15 +272,17 @@ local function item_status(state, item)
 end
 
 --- Run one job for `item`, ignoring further keys for it while it runs, and
---- rebuild the lists when it finishes.
+--- rebuild the lists when it finishes. `after`, when given, runs once the
+--- lists are fresh, with the job's outcome.
 ---@param state table
 ---@param item Repo|ManagedItem
 ---@param fn fun(item: table, done: fun(ok: boolean, err: string?))
-local function job(state, item, fn)
+---@param after fun(ok: boolean, err: string?)?
+local function job(state, item, fn, after)
   local name = item.name
   if state.jobs[name] then return end
   state.jobs[name] = true
-  fn(item, function()
+  fn(item, function(ok, err)
     state.jobs[name] = nil
     if state.closed then return end
     list.refresh()
@@ -291,6 +293,7 @@ local function job(state, item, fn)
     -- reads the same.
     state.preview_key = nil
     M.sync_preview(state)
+    if after then after(ok, err) end
   end)
 end
 
@@ -356,15 +359,16 @@ function M.update_repo(state)
   job(state, item, function(r, done) install.update(r.name, done) end)
 end
 
---- Apply the selected colorscheme, but only when its theme is installed: an
---- uninstalled theme is not on the runtimepath, so it cannot be applied.
+--- Apply the selected colorscheme, installing its theme first when the theme is
+--- not already provided. `elsewhere` means the user's own config provides it,
+--- so it is on the runtimepath and applies just like our own copy.
 ---@param state table
 function M.apply_cs(state)
   local item = selected_item(state)
   local row = state.panes[2].items[state.panes[2].sel]
   if not item or not row then return end
-  local status = item_status(state, item)
-  if status == "ours" or status == "shadow" then
+
+  local function apply()
     -- The row IS a background variant: applying it without moving
     -- vim.o.background would render the theme's other half. Rows without a
     -- known variant (non-dataset Managed rows) keep the current background.
@@ -372,9 +376,14 @@ function M.apply_cs(state)
       vim.o.background = row.bg
     end
     cs.apply(row.name)
-  else
-    vim.notify(("theme: %s is not installed \u{2014} press i on its repo first")
-      :format(row.name), vim.log.levels.WARN)
+  end
+
+  local status = item_status(state, item)
+  if status == "none" then
+    job(state, item, function(r, done) install.install(r.name, done) end,
+      function(ok) if ok then apply() end end)
+  elseif status == "ours" or status == "shadow" or status == "elsewhere" then
+    apply()
   end
 end
 
@@ -467,13 +476,13 @@ local function map_keys(state)
     map(buf, "[", function() M.cycle_view(state, -1) end)
     map(buf, "]", function() M.cycle_view(state, 1) end)
   end
-  -- Manage keys live on the repo list only. Applying belongs to the
-  -- COLORSCHEME list only: the thing being applied is a colorscheme, not a
-  -- repo, so `<CR>` on a repo row does nothing.
+  -- Manage keys live on the repo list only. Its `<CR>` moves to the
+  -- COLORSCHEME list: applying belongs to a colorscheme, not a repo.
   local repos = state.panes[1].buf
   map(repos, "i", function() M.install_repo(state) end)
   map(repos, "x", function() M.uninstall_repo(state) end)
   map(repos, "u", function() M.update_repo(state) end)
+  map(repos, "<CR>", function() M.focus(state, 2) end)
   map(state.panes[2].buf, "<CR>", function() M.apply_cs(state) end)
 end
 

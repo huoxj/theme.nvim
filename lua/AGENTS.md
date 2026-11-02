@@ -56,7 +56,7 @@ invariants; this file is the editing checklist.
   otherwise reopening the panel with the same first repo selected leaves the
   colorscheme list empty. `sync(repo)` gates the re-render on the repo changing.
 - **The focus model is explicit.** `<Tab>`/`<S-Tab>` cycle only the two lists;
-  `1`/`2`/`0` jump by number, and `0` (the preview) is read mode — focusing it
+  `1`/`2`/`3` jump by number, and `3` (the preview) is read mode — focusing it
   must not change the preview's content or title. `M.follow` only re-evaluates
   the preview when the focused pane is a list.
 - **The installer owns exactly one tree.** `lua/theme/install.lua` writes only
@@ -67,10 +67,10 @@ invariants; this file is the editing checklist.
   elsewhere" ignores runtimepath entries under our pack dir and under
   `$VIMRUNTIME`. The panel detects conflicts, never adjudicates: `elsewhere`
   blocks `i`, `shadow` is notified once per open, and `x` removes our copy only.
-- **`<CR>` applies a colorscheme only when its repo is installed**
-  (`ours`/`shadow`); the previews themselves still never apply. That is the
-  panel's one apply path — do not widen it without deciding who owns the
-  theme's installation.
+- **`<CR>` on a colorscheme row applies it.** An `ours`/`shadow`/`elsewhere`
+  theme applies immediately; a `none` theme is installed first and applied only
+  when the install reports success. The previews themselves still never apply.
+  `<CR>` on a repo row only moves focus to the colorscheme list.
 - **`"both"` colorschemes produce two rows** (dark + light) in `ui/list.lua`.
 - **`ui/render.lua` extmark columns are byte offsets** while padding uses display
   width; the swatch glyph (`∙`, U+2219) is 3 bytes / 1 cell. Keep the two

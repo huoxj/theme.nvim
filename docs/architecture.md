@@ -147,14 +147,16 @@ below its widest row, truncating names with an ellipsis) holds the two bordered
 lists with a shared border row; the preview is a
 bordered pane on the right; an unbordered hint bar takes the panel's bottom
 inside row. Each bordered title carries its pane number: ` [1] Repos `,
-` [2] Colorschemes `, ` [0] Preview `.
+` [2] Colorschemes `, ` [3] Preview `.
 
 Focus model:
 
 - `<Tab>`/`<S-Tab>` cycle **only** the two lists; the preview is a document, not
   a stop on the ring.
-- `1`/`2`/`0` jump straight to a pane. `0` is **read mode**: focusing the
+- `1`/`2`/`3` jump straight to a pane. `3` is **read mode**: focusing the
   preview leaves its content untouched; `j`/`k` then scroll it.
+- `<CR>` on a repo row moves focus to the colorscheme list; it installs and
+  applies nothing.
 - `j`/`k` (and arrows) move the focused list's hand-drawn selection, or scroll
   the preview when it is focused.
 - `<Esc>`/`q` close. A `WinEnter` autocmd keeps the focus model (and the
@@ -205,14 +207,17 @@ Managing themes happens on the two lists, through buffer-local keys:
   `u` updates it. Each job runs async; further `i`/`x`/`u` for the same repo are
   ignored until it finishes, and the rows are re-rendered (with fresh status
   chips) when it does.
-- Repos list, Managed: `x` uninstalls, `u` re-clones, and `<CR>` applies the
-  theme's colorscheme — the one selected below it, else the first. `u` needs the
+- Repos list, Managed: `x` uninstalls and `u` re-clones. `u` needs the
   theme's repo URL, which we only know for themes the dataset carries; on a
   theme we cannot place it says so instead of guessing.
-- Colorschemes list: `<CR>` applies the selected colorscheme, but only when its
-  theme is installed (`ours`/`shadow` in Browse, anything in Managed) — an
-  uninstalled theme is not on `runtimepath` and cannot be applied. Otherwise it
-  notifies and applies nothing.
+- Repos list, either view: `<CR>` moves focus to the colorscheme list; it
+  installs and applies nothing.
+- Colorschemes list: `<CR>` applies the selected colorscheme. An installed theme
+  (`ours`/`shadow`/`elsewhere` in Browse, anything in Managed) applies
+  immediately — `elsewhere` is provided by the user's own config, so it is
+  already on `runtimepath`. A theme with status `none` is installed first, and
+  the same selected row is applied only when the install reports success; a
+  failed install leaves the current colorscheme alone.
 
 The view switch and every finished job call `list.forget()`, which forces
 `list.sync()` to rebuild the colorscheme pane even when the selected item looks
@@ -253,11 +258,11 @@ plugin usually still runs but silently misbehaves.
    duration of a session. Every colorscheme surface (panel rows and previews,
    picker previews) is name-keyed through `query_hl`, so a collision picks one
    repo's colors and ignores the other.
-4. **The panel's only apply path is `<CR>` on an *installed* colorscheme row.**
-   Previews still never apply anything (invariant 8); `<CR>` is gated on the
-   repo's status being `ours` or `shadow`, so a theme that is not on
-   `runtimepath` cannot be applied and only produces a hint. Do not widen this
-   to arbitrary themes without deciding who owns their installation.
+4. **The panel's only apply path is `<CR>` on a colorscheme row.** Previews
+   still never apply anything (invariant 8). A repo with status
+   `ours`/`shadow`/`elsewhere` applies immediately; status `none` installs the
+   repo first and applies the same selected row only if the install succeeds.
+   `<CR>` on a repo row only moves focus to the colorscheme list.
 5. **`"both"` colorschemes render as two rows** in the panel (dark + light), so
    a repo's row count can exceed its colorscheme count.
 6. **Dataset `hlgs` are vim highlight attrs with the cterm fields stripped**
@@ -302,7 +307,7 @@ plugin usually still runs but silently misbehaves.
     byte-based while padding stays display-width-based; mixing the two misaligns
     the swatches.
 14. **The focus model is explicit.** `<Tab>`/`<S-Tab>` cycle only the two lists
-    (`LIST_PANES`); `1`/`2`/`0` jump by number. Focusing the preview is *read
+    (`LIST_PANES`); `1`/`2`/`3` jump by number. Focusing the preview is *read
     mode*: `M.follow` only re-evaluates the preview when the focused pane is a
     list, so focusing the preview must not change its content or title.
 15. **Swatch groups are minted per render, inside the pane's namespace**, with
@@ -333,8 +338,9 @@ plugin usually still runs but silently misbehaves.
     under `$VIMRUNTIME`. The panel only ever detects a conflict: `elsewhere`
     blocks `i`, `shadow` is notified once per open, and `x` removes our copy
     only.
-21. **`<CR>` on a colorscheme row is gated on the repo being installed**
-    (`ours`/`shadow`). The panel is otherwise still preview-only.
+21. **`<CR>` on a colorscheme row applies it when the repo is installed**
+    (`ours`/`shadow`/`elsewhere`); a `none` repo is installed first and applied
+    only on success. `<CR>` on a repo row only focuses the colorscheme list.
 22. **The repos pane has two views over one widget.** `state.view` is `"browse"`
     (the dataset, with chips) or `"managed"` (our pack dir, from
     `install.installed()`); `m` and `b` switch, the pane title and the hint bar
