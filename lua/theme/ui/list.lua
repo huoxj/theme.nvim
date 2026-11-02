@@ -375,13 +375,34 @@ function M.preview_wraps(item)
   return item ~= nil and harvested(item) and M.has_readme(item)
 end
 
---- The bottom bar, padded to `width`. On a narrow panel the bar is truncated
---- with an ellipsis rather than clipped mid-word.
+--- The bottom bar, padded to `width`. `ctx.kind` is the focused pane
+--- ("repos", "cs" or "preview"); `ctx.status` is the selected repo's install
+--- status and `ctx.installed` says whether the colorscheme list's repo is
+--- available. On a narrow panel the bar is truncated with an ellipsis rather
+--- than clipped mid-word.
 ---@param width integer
+---@param ctx { kind: string, status?: string, installed?: boolean }
 ---@return table[]
-function M.build_hint(width)
-  local text = " Tab: List  F: Filter  S: Sort  "
-    .. "i: Install  x: Remove  u: Update  q: Quit"
+function M.build_hint(width, ctx)
+  local segs
+  if ctx.kind == "repos" then
+    segs = { "Tab: readme", "F: filter", "S: sort" }
+    if ctx.status == "none" then
+      segs[#segs + 1] = "i: Install"
+    elseif ctx.status then
+      segs[#segs + 1] = "x: Remove"
+      segs[#segs + 1] = "u: Update"
+    end
+    segs[#segs + 1] = "enter: view colorschemes"
+  elseif ctx.kind == "cs" then
+    segs = { "Tab: preview", "F: filter", "S: sort",
+      ctx.installed and "enter: switch" or "enter: install & switch" }
+  else
+    segs = { "Tab: list" }
+  end
+  segs[#segs + 1] = "q: quit"
+
+  local text = " " .. table.concat(segs, "  ")
   local ln = render.line()
   ln:text(render.fit(text, width))
   ln:pad(width)

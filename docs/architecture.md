@@ -151,8 +151,8 @@ inside row. Each bordered title carries its pane number: ` [1] Repos `,
 
 Focus model:
 
-- `<Tab>`/`<S-Tab>` cycle **only** the two lists; the preview is a document, not
-  a stop on the ring.
+- `<Tab>`/`<S-Tab>` toggle between the focused list and the preview; from the
+  preview they return to the list it describes (`preview_src`).
 - `1`/`2`/`3` jump straight to a pane. `3` is **read mode**: focusing the
   preview leaves its content untouched; `j`/`k` then scroll it.
 - `<CR>` on a repo row moves focus to the colorscheme list; it installs and
@@ -305,10 +305,11 @@ plugin usually still runs but silently misbehaves.
     (`∙`, U+2219) is 3 bytes wide but 1 cell wide. Extmark columns must stay
     byte-based while padding stays display-width-based; mixing the two misaligns
     the swatches.
-14. **The focus model is explicit.** `<Tab>`/`<S-Tab>` cycle only the two lists
-    (`LIST_PANES`); `1`/`2`/`3` jump by number. Focusing the preview is *read
-    mode*: `M.follow` only re-evaluates the preview when the focused pane is a
-    list, so focusing the preview must not change its content or title.
+14. **The focus model is explicit.** `<Tab>`/`<S-Tab>` toggle between the
+    focused list and the preview (pane `3`), returning to the list the preview
+    describes; `1`/`2`/`3` jump by number. Focusing the preview is *read mode*:
+    `M.follow` only re-evaluates the preview when the focused pane is a list,
+    so focusing the preview must not change its content or title.
 15. **Swatch groups are minted per render, inside the pane's namespace**, with
     the dataset's stored fg/bg; a group with neither is skipped. The window is
     pointed at that namespace (`nvim_win_set_hl_ns`) after the render, so the

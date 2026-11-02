@@ -55,10 +55,10 @@ invariants; this file is the editing checklist.
 - **`ui/list.lua` must reset `prev_repo` in `reset()` (called from `open()`)**,
   otherwise reopening the panel with the same first repo selected leaves the
   colorscheme list empty. `sync(repo)` gates the re-render on the repo changing.
-- **The focus model is explicit.** `<Tab>`/`<S-Tab>` cycle only the two lists;
-  `1`/`2`/`3` jump by number, and `3` (the preview) is read mode — focusing it
-  must not change the preview's content or title. `M.follow` only re-evaluates
-  the preview when the focused pane is a list.
+- **The focus model is explicit.** `<Tab>`/`<S-Tab>` toggle between a list and
+  the preview; `1`/`2`/`3` jump by number, and `3` (the preview) is read mode —
+  focusing it must not change the preview's content or title. `M.follow` only
+  re-evaluates the preview when the focused pane is a list.
 - **The installer owns exactly one tree.** `lua/theme/install.lua` writes only
   `stdpath("data")/site/pack/theme/start/<repo-basename>`; installs are atomic
   (clone to `<dir>.tmp-<pid>` → verify `colors/` → `fs_rename`), and every

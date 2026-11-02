@@ -17,9 +17,9 @@ local cs = require("theme.colorscheme")
 local B = 1             -- border cost per side of a bordered float
 local GAP_X = 1         -- blank columns between the left column and the preview
 local MIN_PREVIEW_W = 24
--- Tab and S-Tab only ever move between the two LISTS: the preview is a
--- document, not a stop on the focus ring.
-local LIST_PANES = { 1, 2 }
+-- Tab and S-Tab toggle between the focused list and the preview: from a list
+-- they open the document it feeds, and from the preview they return to it.
+local PREVIEW = 3
 -- The pane number shown in each border title, and the key that jumps to it.
 local PANE_NUM = { "1", "2", "3" }
 -- The fixed names the two lists and the preview carry.
@@ -105,6 +105,9 @@ function M.layout(min_left_w)
 end
 
 ----------------------------------------------------------------------- focus
+-- Rebuilt on every apply_focus; defined below with the state helpers it reads.
+local refresh_hint
+
 ---@param state table
 function M.apply_focus(state)
   for i, pane in ipairs(state.panes) do
@@ -113,6 +116,7 @@ function M.apply_focus(state)
         chrome.winhl(pane.kind, i == state.focus, state.preview_tinted)
     end
   end
+  refresh_hint(state)
 end
 
 --- The preview always describes the FOCUSED LIST's current selection, so moving
@@ -143,18 +147,15 @@ function M.focus(state, i)
   M.follow(state)
 end
 
---- Tab / S-Tab: walk the two list panes. `dir` is kept so the two call
---- sites read as forward/backward, but with two panes both directions
---- reach the other one.
+--- Tab / S-Tab: the preview is the other stop. From either list they open the
+--- preview; from the preview they return to the list it describes.
 ---@param state table
----@param dir integer
-function M.focus_list(state, dir)
-  local at = 1
-  for i, p in ipairs(LIST_PANES) do
-    if p == state.focus then at = i end
+function M.toggle_preview(state)
+  if state.focus == PREVIEW then
+    M.focus(state, state.preview_src == "cs" and 2 or 1)
+  else
+    M.focus(state, PREVIEW)
   end
-  local n = #LIST_PANES
-  M.focus(state, LIST_PANES[((at - 1 + dir) % n) + 1])
 end
 
 --- Number keys: jump straight to a pane (lazygit-style pane picker).
@@ -356,6 +357,23 @@ end
 local function item_status(item)
   if item.dir then return install.status(item.name) end
   return list.statuses()[item.name]
+end
+
+--- Rebuild the hint bar from what the focused pane currently offers. The
+--- colorscheme list describes the repo the repos list has selected.
+---@param state table
+function refresh_hint(state)
+  local kind = state.panes[state.focus].kind
+  local ctx = { kind = kind }
+  if kind == "repos" then
+    local item = selected_item(state)
+    ctx.status = item and item_status(item) or nil
+  elseif kind == "cs" then
+    local item = selected_item(state)
+    local status = item and item_status(item) or nil
+    ctx.installed = status ~= nil and status ~= "none"
+  end
+  render.render_lines(state.hint, list.build_hint(state.hint.width, ctx))
 end
 
 --- Run one job for `item`, ignoring further keys for it while it runs, and
@@ -593,8 +611,8 @@ local function map_keys(state)
       { buffer = buf, noremap = true, silent = true, nowait = true })
   end
   for _, pane in ipairs(state.panes) do
-    map(pane.buf, "<Tab>", function() M.focus_list(state, 1) end)
-    map(pane.buf, "<S-Tab>", function() M.focus_list(state, -1) end)
+    map(pane.buf, "<Tab>", function() M.toggle_preview(state) end)
+    map(pane.buf, "<S-Tab>", function() M.toggle_preview(state) end)
     for i = 1, #PANE_NUM do
       map(pane.buf, PANE_NUM[i], function() M.focus_num(state, i) end)
     end
@@ -666,7 +684,6 @@ function M.open()
   })
   vim.wo[state.hint.win].winhighlight =
     "Normal:ThemeUIHint,EndOfBuffer:ThemeUIHint"
-  render.render_lines(state.hint, list.build_hint(hg.width))
 
   list.reset()
   state.panes[1].sel = 1

@@ -74,9 +74,9 @@ module map, data flow, and the numbered invariants/gotchas. The short version:
   colorscheme list has its own filter (`F`: all / light / dark) and one name
   sort (`S`).
 - The panel is three bordered panes (Repos, Colorschemes, Preview) over a
-  backdrop, with an explicit focus model: `Tab`/`S-Tab` cycle the two lists,
-  `1`/`2`/`3` jump by number, and the preview (`3`) is read mode. `<CR>` on a
-  repo row moves to the colorscheme list.
+  backdrop, with an explicit focus model: `Tab`/`S-Tab` toggle between a list
+  and the preview, `1`/`2`/`3` jump by number, and the preview (`3`) is read
+  mode. `<CR>` on a repo row moves to the colorscheme list.
 - Previews never apply a colorscheme; they write to a window-local highlight
   namespace.
 
