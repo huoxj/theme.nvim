@@ -3,8 +3,8 @@
 --
 -- The preview follows the focused list's selection: the repo list shows that
 -- repo's README, the colorscheme list shows the sample code tinted with the
--- selected variant. The preview itself is a read-only document, reached with
--- its own number key rather than by cycling.
+-- selected variant. The preview itself is a read-only document; Tab cycles
+-- through all three panes, and focusing the preview never changes its content.
 local M = {}
 
 local render = require("theme.ui.render")
@@ -17,9 +17,6 @@ local cs = require("theme.colorscheme")
 local B = 1             -- border cost per side of a bordered float
 local GAP_X = 1         -- blank columns between the left column and the preview
 local MIN_PREVIEW_W = 24
--- Tab and S-Tab toggle between the focused list and the preview: from a list
--- they open the document it feeds, and from the preview they return to it.
-local PREVIEW = 3
 -- The pane number shown in each border title, and the key that jumps to it.
 local PANE_NUM = { "1", "2", "3" }
 -- The fixed names the two lists and the preview carry.
@@ -147,15 +144,12 @@ function M.focus(state, i)
   M.follow(state)
 end
 
---- Tab / S-Tab: the preview is the other stop. From either list they open the
---- preview; from the preview they return to the list it describes.
+--- Tab / S-Tab: move to the next or previous pane, wrapping around. Focusing
+--- the preview is read mode; M.focus only refreshes it for list panes.
 ---@param state table
-function M.toggle_preview(state)
-  if state.focus == PREVIEW then
-    M.focus(state, state.preview_src == "cs" and 2 or 1)
-  else
-    M.focus(state, PREVIEW)
-  end
+---@param delta integer
+function M.cycle_focus(state, delta)
+  M.focus(state, state.focus + delta)
 end
 
 --- Number keys: jump straight to a pane (lazygit-style pane picker).
@@ -519,7 +513,7 @@ local function flash_title(state, i, text)
   end))
 end
 
---- `F`: all -> installed -> managed. The repos selection resets, and both the
+--- `f`: all -> installed -> managed. The repos selection resets, and both the
 --- colorscheme list and the preview follow the new selection.
 ---@param state table
 function M.cycle_repo_filter(state)
@@ -533,7 +527,7 @@ function M.cycle_repo_filter(state)
   flash_title(state, 1, "filter: " .. state.filter)
 end
 
---- `S`: stars -> name -> owner, keeping the selected item when it survives the
+--- `s`: stars -> name -> owner, keeping the selected item when it survives the
 --- reorder and falling back to the first row otherwise.
 ---@param state table
 function M.cycle_repo_sort(state)
@@ -552,7 +546,7 @@ function M.cycle_repo_sort(state)
   flash_title(state, 1, "sort: " .. state.sort_repo)
 end
 
---- `F` on the colorscheme list: all -> light -> dark, clamped to the new row
+--- `f` on the colorscheme list: all -> light -> dark, clamped to the new row
 --- count.
 ---@param state table
 function M.cycle_cs_filter(state)
@@ -563,7 +557,7 @@ function M.cycle_cs_filter(state)
   flash_title(state, 2, "filter: " .. state.filter_cs)
 end
 
---- `S` on the colorscheme list: name ascending, the only sort for now.
+--- `s` on the colorscheme list: name ascending, the only sort for now.
 ---@param state table
 function M.sort_cs(state)
   render_cs(state, selected_item(state), true)
@@ -611,8 +605,8 @@ local function map_keys(state)
       { buffer = buf, noremap = true, silent = true, nowait = true })
   end
   for _, pane in ipairs(state.panes) do
-    map(pane.buf, "<Tab>", function() M.toggle_preview(state) end)
-    map(pane.buf, "<S-Tab>", function() M.toggle_preview(state) end)
+    map(pane.buf, "<Tab>", function() M.cycle_focus(state, 1) end)
+    map(pane.buf, "<S-Tab>", function() M.cycle_focus(state, -1) end)
     for i = 1, #PANE_NUM do
       map(pane.buf, PANE_NUM[i], function() M.focus_num(state, i) end)
     end
@@ -626,10 +620,10 @@ local function map_keys(state)
   -- Each list filters and sorts itself; the keys live on its own buffer.
   local repos = state.panes[1].buf
   local cs_buf = state.panes[2].buf
-  map(repos, "F", function() M.cycle_repo_filter(state) end)
-  map(repos, "S", function() M.cycle_repo_sort(state) end)
-  map(cs_buf, "F", function() M.cycle_cs_filter(state) end)
-  map(cs_buf, "S", function() M.sort_cs(state) end)
+  map(repos, "f", function() M.cycle_repo_filter(state) end)
+  map(repos, "s", function() M.cycle_repo_sort(state) end)
+  map(cs_buf, "f", function() M.cycle_cs_filter(state) end)
+  map(cs_buf, "s", function() M.sort_cs(state) end)
   -- Manage keys live on the repo list only. Its `<CR>` moves to the
   -- COLORSCHEME list: applying belongs to a colorscheme, not a repo.
   map(repos, "i", function() M.install_repo(state) end)

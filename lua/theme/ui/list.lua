@@ -386,19 +386,19 @@ end
 function M.build_hint(width, ctx)
   local segs
   if ctx.kind == "repos" then
-    segs = { "Tab: readme", "F: filter", "S: sort" }
+    segs = { "f: filter", "s: sort" }
     if ctx.status == "none" then
-      segs[#segs + 1] = "i: Install"
+      segs[#segs + 1] = "i: install"
     elseif ctx.status then
-      segs[#segs + 1] = "x: Remove"
-      segs[#segs + 1] = "u: Update"
+      segs[#segs + 1] = "x: remove"
+      segs[#segs + 1] = "u: update"
     end
-    segs[#segs + 1] = "enter: view colorschemes"
+    segs[#segs + 1] = "Enter: view"
   elseif ctx.kind == "cs" then
-    segs = { "Tab: preview", "F: filter", "S: sort",
-      ctx.installed and "enter: switch" or "enter: install & switch" }
+    segs = { "f: filter", "s: sort",
+      ctx.installed and "Enter: switch" or "Enter: install & switch" }
   else
-    segs = { "Tab: list" }
+    segs = {}
   end
   segs[#segs + 1] = "q: quit"
 

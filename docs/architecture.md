@@ -151,10 +151,10 @@ inside row. Each bordered title carries its pane number: ` [1] Repos `,
 
 Focus model:
 
-- `<Tab>`/`<S-Tab>` toggle between the focused list and the preview; from the
-  preview they return to the list it describes (`preview_src`).
-- `1`/`2`/`3` jump straight to a pane. `3` is **read mode**: focusing the
-  preview leaves its content untouched; `j`/`k` then scroll it.
+- `<Tab>`/`<S-Tab>` cycle through all three panes: Tab moves 1 → 2 → 3 → 1 and
+  S-Tab the reverse. `1`/`2`/`3` jump straight to a pane. Focusing `3` is
+  **read mode**: it leaves the preview's content untouched; `j`/`k` then scroll
+  it.
 - `<CR>` on a repo row moves focus to the colorscheme list; it installs and
   applies nothing.
 - `j`/`k` (and arrows) move the focused list's hand-drawn selection, or scroll
@@ -183,12 +183,12 @@ empty colorscheme list).
 
 #### Filtering and sorting the lists
 
-The repos pane has one list. `F` cycles its filter: **all** (the default, the
+The repos pane has one list. `f` cycles its filter: **all** (the default, the
 harvested catalogue with install chips), **installed** (dataset repos whose
 status is not `none`), and **managed** (what our own pack dir holds,
 `install.installed()`). A managed directory whose name matches a dataset repo is
 shown under that repo's name and keeps its stars; a theme we only have on disk
-is shown by directory name alone. `S` cycles its sort: **stars** (the default,
+is shown by directory name alone. `s` cycles its sort: **stars** (the default,
 descending), **name**, and **owner** (ascending). The filter picks the item set
 and the sort orders it.
 
@@ -198,8 +198,8 @@ without swatches, because an unharvested theme has no stored highlights and
 showing another repo's same-named colorscheme would be a guess. An empty filter
 renders a filter-specific note instead of rows, and the preview says the same.
 
-The colorscheme list has its own filter (`F`: all → light → dark, by `row.bg`)
-and one sort (`S`: name ascending).
+The colorscheme list has its own filter (`f`: all → light → dark, by `row.bg`)
+and one sort (`s`: name ascending).
 
 Managing themes happens on the two lists, through buffer-local keys:
 
@@ -305,11 +305,11 @@ plugin usually still runs but silently misbehaves.
     (`∙`, U+2219) is 3 bytes wide but 1 cell wide. Extmark columns must stay
     byte-based while padding stays display-width-based; mixing the two misaligns
     the swatches.
-14. **The focus model is explicit.** `<Tab>`/`<S-Tab>` toggle between the
-    focused list and the preview (pane `3`), returning to the list the preview
-    describes; `1`/`2`/`3` jump by number. Focusing the preview is *read mode*:
-    `M.follow` only re-evaluates the preview when the focused pane is a list,
-    so focusing the preview must not change its content or title.
+14. **The focus model is explicit.** `<Tab>`/`<S-Tab>` cycle through all three
+    panes, wrapping (Tab: `1` → `2` → `3` → `1`; S-Tab the reverse);
+    `1`/`2`/`3` jump by number. Focusing the preview is *read mode*: `M.follow`
+    only re-evaluates the preview when the focused pane is a list, so focusing
+    the preview must not change its content or title.
 15. **Swatch groups are minted per render, inside the pane's namespace**, with
     the dataset's stored fg/bg; a group with neither is skipped. The window is
     pointed at that namespace (`nvim_win_set_hl_ns`) after the render, so the
@@ -343,8 +343,8 @@ plugin usually still runs but silently misbehaves.
     only on success. `<CR>` on a repo row only focuses the colorscheme list.
 22. **The lists are filter + sort views.** The repos pane's `state.filter` is
     `"all"` (the dataset, with chips), `"installed"`, or `"managed"` (our pack
-    dir, from `install.installed()`); `F` cycles it. Its `state.sort_repo` is
-    `"stars"`, `"name"`, or `"owner"`; `S` cycles it. The colorscheme pane has
+    dir, from `install.installed()`); `f` cycles it. Its `state.sort_repo` is
+    `"stars"`, `"name"`, or `"owner"`; `s` cycles it. The colorscheme pane has
     its own `state.filter_cs` (`"all"`/`"light"`/`"dark"`, by `row.bg`) and a
     single name sort. A managed row is ours already, so `i` is refused through
     the normal status check rather than the filter. Any trigger that changes the

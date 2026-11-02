@@ -66,17 +66,17 @@ module map, data flow, and the numbered invariants/gotchas. The short version:
   theme (`ours`/`shadow`/`elsewhere`) applies immediately, and a `none` theme is
   installed first and applied only on success; previews never apply a
   colorscheme.
-- The Repos list is one list with a **filter and a sort** (`F` / `S`). The
+- The Repos list is one list with a **filter and a sort** (`f` / `s`). The
   filter is all / installed / managed; the sort is stars / name / owner. The
   managed filter lists our pack dir, joined to the dataset by directory
   basename, with no chips; a theme only on disk shows its directory name, gets
   its colorscheme rows from its own `colors/`, and refuses `u`. The
-  colorscheme list has its own filter (`F`: all / light / dark) and one name
-  sort (`S`).
+  colorscheme list has its own filter (`f`: all / light / dark) and one name
+  sort (`s`).
 - The panel is three bordered panes (Repos, Colorschemes, Preview) over a
-  backdrop, with an explicit focus model: `Tab`/`S-Tab` toggle between a list
-  and the preview, `1`/`2`/`3` jump by number, and the preview (`3`) is read
-  mode. `<CR>` on a repo row moves to the colorscheme list.
+  backdrop, with an explicit focus model: `Tab`/`S-Tab` cycle through all
+  three panes (forward/reverse), `1`/`2`/`3` jump by number, and the preview
+  (`3`) is read mode. `<CR>` on a repo row moves to the colorscheme list.
 - Previews never apply a colorscheme; they write to a window-local highlight
   namespace.
 
