@@ -18,9 +18,9 @@ local CHIP_HL = { ours = "ThemeUIOurs", elsewhere = "ThemeUIElsewhere",
   shadow = "ThemeUIWarn" }
 local CHIP_W = 2 -- glyph + separator space; reserved even when there is no chip
 
---- A theme in theme.nvim's own pack dir, as the Managed view shows it. `repo`
---- is the dataset record when the dataset knows a repo of that directory name;
---- a theme we only have on disk carries `repo = nil`.
+--- A theme in theme.nvim's own pack dir, as the `managed` filter shows it.
+--- `repo` is the dataset record when the dataset knows a repo of that
+--- directory name; a theme we only have on disk carries `repo = nil`.
 ---@class ManagedItem
 ---@field name string shown name: "owner/repo", or the directory name
 ---@field dir string absolute path of our clone
@@ -30,7 +30,7 @@ local CHIP_W = 2 -- glyph + separator space; reserved even when there is no chip
 local repos
 ---@type ManagedItem[]?
 local managed_items
---- The repo (Browse) or managed item (Managed) the colorscheme pane describes.
+--- The repo or managed item the colorscheme pane describes.
 ---@type Repo|ManagedItem?
 local prev_repo
 --- Set when the lists were rebuilt under the panel, forcing the next `sync`
@@ -163,8 +163,7 @@ function M.cs_rows_managed(item)
   return rows
 end
 
---- The colorscheme rows for whatever the repos pane has selected, in either
---- view.
+--- The colorscheme rows for whatever the repos pane has selected.
 ---@param item Repo|ManagedItem
 ---@return { name: string, bg: string, hlgs: HighlightGroups? }[]
 function M.cs_rows_of(item)
@@ -253,8 +252,8 @@ function M.build_repo(item, width, selected)
   return { ln }
 end
 
---- "  folke/tokyonight.nvim  ★ 8213" -- same row as the Browse view without
---- the install chip: everything in this view is ours by construction. Themes
+--- "  folke/tokyonight.nvim  ★ 8213" -- the dataset row without the install
+--- chip: everything the managed filter lists is ours by construction. Themes
 --- the dataset does not know have no stars to show.
 --- Layout: gutter(2) name gap(>=1) star(2) digits margin(2).
 ---@param item ManagedItem
@@ -277,13 +276,17 @@ function M.build_managed(item, width, selected)
   return { ln }
 end
 
---- "  nothing installed yet — press b for Browse": the Managed view before
---- anything has been installed.
+--- "  nothing installed": the empty state of the repos pane, worded for the
+--- filter that produced it.
 ---@param width integer
+---@param filter string?
 ---@return table[]
-function M.build_empty(width)
+function M.build_empty(width, filter)
+  local text = filter == "installed" and "nothing installed"
+    or filter == "managed" and "nothing installed by theme.nvim"
+    or "nothing to show"
   local ln = render.line()
-  ln:text("  nothing installed yet \u{2014} press b for Browse", "ThemeUIDim")
+  ln:text("  " .. text, "ThemeUIDim")
   ln:pad(width)
   return { ln }
 end
@@ -341,7 +344,7 @@ end
 --- The preview body for the selected item: the dataset README (or the wrapped
 --- description) when the dataset knows the theme, otherwise what our own clone
 --- tells us -- where it lives and which colorschemes it ships. With nothing
---- selected (an empty Managed view) it is the empty-state note.
+--- selected (an empty list) it is the empty-state note.
 ---@param item Repo|ManagedItem?
 ---@param width integer
 ---@param height integer
@@ -372,16 +375,13 @@ function M.preview_wraps(item)
   return item ~= nil and harvested(item) and M.has_readme(item)
 end
 
---- The bottom bar, padded to `width`. The management keys are contextual: the
---- Managed view holds nothing to install, so it drops `i`. On a narrow panel
---- the bar is truncated with an ellipsis rather than clipped mid-word.
+--- The bottom bar, padded to `width`. On a narrow panel the bar is truncated
+--- with an ellipsis rather than clipped mid-word.
 ---@param width integer
----@param view "browse"|"managed"?
 ---@return table[]
-function M.build_hint(width, view)
-  local text = " Tab: List  [/]: View  "
-    .. (view == "managed" and "" or "i: Install  ")
-    .. "x: Remove  u: Update  q: Quit"
+function M.build_hint(width)
+  local text = " Tab: List  F: Filter  S: Sort  "
+    .. "i: Install  x: Remove  u: Update  q: Quit"
   local ln = render.line()
   ln:text(render.fit(text, width))
   ln:pad(width)

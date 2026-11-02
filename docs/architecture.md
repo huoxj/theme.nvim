@@ -43,7 +43,7 @@ One responsibility per file. Every module is a plain table (`local M = {}` …
 | `lua/theme/ui/init.lua` | Panel lifecycle: layout, open/close, the focus model, keymaps, and preview wiring. |
 | `lua/theme/ui/render.lua` | Generic float-pane plumbing: the `Line` builder, painting, hand-drawn selection/segment extmarks, and the per-render swatch groups. |
 | `lua/theme/ui/chrome.lua` | Panel chrome: highlight groups (palette mined from the active colorscheme) and the `winhighlight` mapping per pane/focus. |
-| `lua/theme/ui/list.lua` | Panel content: stars-sorted repo rows, managed-theme rows, colorscheme rows (one per variant), the preview bodies, and the hint bar. |
+| `lua/theme/ui/list.lua` | Panel content: repo rows, managed-theme rows, colorscheme rows (one per variant), the preview bodies, and the hint bar. |
 | `lua/telescope/_extensions/theme.lua` | Registers the `themes` telescope extension. |
 | `plugin/theme.lua` | Defines the `:Theme` user command and its completion. |
 | `scripts/build_hljson.py` | Offline harvester: GitHub search → tarball → headless sampling → `hl.json`. |
@@ -181,45 +181,44 @@ re-renders the colorscheme list through `list.sync()` (the `prev_repo` guard;
 `list.reset()` runs on every open so a reopened panel is never left with an
 empty colorscheme list).
 
-#### Two views of the repo list
+#### Filtering and sorting the lists
 
-`state.view` picks which rows the repos pane holds:
+The repos pane has one list. `F` cycles its filter: **all** (the default, the
+harvested catalogue with install chips), **installed** (dataset repos whose
+status is not `none`), and **managed** (what our own pack dir holds,
+`install.installed()`). A managed directory whose name matches a dataset repo is
+shown under that repo's name and keeps its stars; a theme we only have on disk
+is shown by directory name alone. `S` cycles its sort: **stars** (the default,
+descending), **name**, and **owner** (ascending). The filter picks the item set
+and the sort orders it.
 
-- **Browse** (the default) — the harvested catalogue, one row per dataset repo,
-  with its install chip. `m` switches to Managed.
-- **Managed** — what our own pack dir holds (`install.installed()`). A directory
-  whose name matches a dataset repo is shown under that repo's name and keeps
-  its stars; a theme we only have on disk is shown by directory name alone.
-  There are no chips here (everything listed is ours by construction) and `i` is
-  refused. `b` switches back to Browse.
+Selecting a managed row renders the dataset's colorscheme rows when the dataset
+knows the theme, and otherwise one row per `colors/*.vim|lua` in our clone —
+without swatches, because an unharvested theme has no stored highlights and
+showing another repo's same-named colorscheme would be a guess. An empty filter
+renders a filter-specific note instead of rows, and the preview says the same.
 
-The pane title follows the view (` [1] Repos ` / ` [1] Managed `) and the hint
-bar names the view its key leads to. Selecting a Managed row renders the
-dataset's colorscheme rows when the dataset knows the theme, and otherwise one
-row per `colors/*.vim|lua` in our clone — without swatches, because an
-unharvested theme has no stored highlights and showing another repo's
-same-named colorscheme would be a guess. An empty Managed view renders a note
-instead of rows, and the preview says the same.
+The colorscheme list has its own filter (`F`: all → light → dark, by `row.bg`)
+and one sort (`S`: name ascending).
 
 Managing themes happens on the two lists, through buffer-local keys:
 
-- Repos list, Browse: `i` installs the selected repo, `x` uninstalls our copy,
-  `u` updates it. Each job runs async; further `i`/`x`/`u` for the same repo are
+- Repos list: `i` installs the selected repo, `x` uninstalls our copy, `u`
+  updates it. Each job runs async; further `i`/`x`/`u` for the same repo are
   ignored until it finishes, and the rows are re-rendered (with fresh status
-  chips) when it does.
-- Repos list, Managed: `x` uninstalls and `u` re-clones. `u` needs the
-  theme's repo URL, which we only know for themes the dataset carries; on a
-  theme we cannot place it says so instead of guessing.
-- Repos list, either view: `<CR>` moves focus to the colorscheme list; it
-  installs and applies nothing.
+  chips) when it does. `u` needs the theme's repo URL, which we only know for
+  themes the dataset carries; on a managed theme we cannot place it says so
+  instead of guessing.
+- Repos list: `<CR>` moves focus to the colorscheme list; it installs and
+  applies nothing.
 - Colorschemes list: `<CR>` applies the selected colorscheme. An installed theme
-  (`ours`/`shadow`/`elsewhere` in Browse, anything in Managed) applies
-  immediately — `elsewhere` is provided by the user's own config, so it is
-  already on `runtimepath`. A theme with status `none` is installed first, and
-  the same selected row is applied only when the install reports success; a
-  failed install leaves the current colorscheme alone.
+  (`ours`/`shadow`/`elsewhere`) applies immediately — `elsewhere` is provided by
+  the user's own config, so it is already on `runtimepath`. A theme with status
+  `none` is installed first, and the same selected row is applied only when the
+  install reports success; a failed install leaves the current colorscheme
+  alone.
 
-The view switch and every finished job call `list.forget()`, which forces
+A repos filter change and every finished job call `list.forget()`, which forces
 `list.sync()` to rebuild the colorscheme pane even when the selected item looks
 unchanged; a finished job also calls `list.refresh()` (fresh statuses and pack
 dir scan) and drops the preview's cache key.
@@ -341,12 +340,14 @@ plugin usually still runs but silently misbehaves.
 21. **`<CR>` on a colorscheme row applies it when the repo is installed**
     (`ours`/`shadow`/`elsewhere`); a `none` repo is installed first and applied
     only on success. `<CR>` on a repo row only focuses the colorscheme list.
-22. **The repos pane has two views over one widget.** `state.view` is `"browse"`
-    (the dataset, with chips) or `"managed"` (our pack dir, from
-    `install.installed()`); `m` and `b` switch, the pane title and the hint bar
-    follow, and the view is part of the preview's cache key — the same row index
-    means a different theme in each view. `i` is a Browse key: a Managed row is
-    ours already, so it is refused rather than re-cloned.
+22. **The lists are filter + sort views.** The repos pane's `state.filter` is
+    `"all"` (the dataset, with chips), `"installed"`, or `"managed"` (our pack
+    dir, from `install.installed()`); `F` cycles it. Its `state.sort_repo` is
+    `"stars"`, `"name"`, or `"owner"`; `S` cycles it. The colorscheme pane has
+    its own `state.filter_cs` (`"all"`/`"light"`/`"dark"`, by `row.bg`) and a
+    single name sort. A managed row is ours already, so `i` is refused through
+    the normal status check rather than the filter. Any trigger that changes the
+    rows drops the preview's cache key.
 23. **A Managed row is `{ name, dir, repo }`.** `name` is the dataset repo name
     when the dataset knows a repo of that directory name (joined on the
     basename, first dataset match wins) and the directory name otherwise;
@@ -357,7 +358,7 @@ plugin usually still runs but silently misbehaves.
 24. **`list.forget()` is how the colorscheme pane is forced to re-render.**
     `sync()` normally skips when the selected item is unchanged (the
     `prev_repo` guard); `forget()` sets a one-shot `forced` flag that makes the
-    next `sync()` rebuild anyway. Both the view switch and every finished job
+    next `sync()` rebuild anyway. A repos filter change and every finished job
     call it, and `refresh()` (statuses + the pack dir scan) must be cleared by
     anything that changes the filesystem.
 

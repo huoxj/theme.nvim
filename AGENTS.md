@@ -63,13 +63,16 @@ module map, data flow, and the numbered invariants/gotchas. The short version:
   **`shadow > ours > elsewhere > none`**; the panel detects conflicts rather
   than adjudicating them.
 - The panel's only apply path is **`<CR>` on a colorscheme row**: an installed
-  theme (`ours`/`shadow`/`elsewhere` in Browse, anything in Managed) applies
-  immediately, and a `none` theme is installed first and applied only on
-  success; previews never apply a colorscheme.
-- The Repos list has **two views** (`m` / `b`): Browse (the dataset, with chips)
-  and Managed (our pack dir, joined to the dataset by directory basename, no
-  chips, `i` refused). A theme only on disk shows its directory name, gets its
-  colorscheme rows from its own `colors/`, and refuses `u`.
+  theme (`ours`/`shadow`/`elsewhere`) applies immediately, and a `none` theme is
+  installed first and applied only on success; previews never apply a
+  colorscheme.
+- The Repos list is one list with a **filter and a sort** (`F` / `S`). The
+  filter is all / installed / managed; the sort is stars / name / owner. The
+  managed filter lists our pack dir, joined to the dataset by directory
+  basename, with no chips; a theme only on disk shows its directory name, gets
+  its colorscheme rows from its own `colors/`, and refuses `u`. The
+  colorscheme list has its own filter (`F`: all / light / dark) and one name
+  sort (`S`).
 - The panel is three bordered panes (Repos, Colorschemes, Preview) over a
   backdrop, with an explicit focus model: `Tab`/`S-Tab` cycle the two lists,
   `1`/`2`/`3` jump by number, and the preview (`3`) is read mode. `<CR>` on a

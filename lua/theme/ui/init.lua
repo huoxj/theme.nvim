@@ -22,23 +22,32 @@ local MIN_PREVIEW_W = 24
 local LIST_PANES = { 1, 2 }
 -- The pane number shown in each border title, and the key that jumps to it.
 local PANE_NUM = { "1", "2", "3" }
--- Pane 1's title is its view tab strip (see view_title); the other two are
--- fixed names.
-local PANE_TITLE = { [2] = "Colorschemes", [3] = "Preview" }
--- The views the repos pane cycles through, in tab order.
-local VIEWS = { "browse", "managed" }
+-- The fixed names the two lists and the preview carry.
+local PANE_TITLE = { [1] = "Repos", [2] = "Colorschemes", [3] = "Preview" }
+-- Repo filter and sort cycles; the colorscheme list has its own filter and a
+-- single sort.
+local REPO_FILTERS = { "all", "installed", "managed" }
+local REPO_SORTS = { "stars", "name", "owner" }
+local CS_FILTERS = { "all", "light", "dark" }
 
 local active = nil
 
---- The repos pane's title doubles as a tab strip: the active view is the
---- bracketed one, so the title says both what the pane holds and what `[`/`]`
---- would switch to.
----@param view "browse"|"managed"
+---@param i integer
 ---@return string
-local function view_title(view)
-  local browse = view == "browse" and "[Browse]" or "Browse"
-  local managed = view == "managed" and "[Managed]" or "Managed"
-  return " [1] " .. browse .. " " .. managed .. " "
+local function pane_title(i)
+  return (" [%s] %s "):format(PANE_NUM[i], PANE_TITLE[i])
+end
+
+--- The next value in a cycle.
+---@param value string
+---@param values string[]
+---@return string
+local function cycle(value, values)
+  local at = 1
+  for i, v in ipairs(values) do
+    if v == value then at = i end
+  end
+  return values[((at - 1 + 1) % #values) + 1]
 end
 
 --------------------------------------------------------------------- geometry
@@ -164,18 +173,17 @@ function M.sync_preview(state, src)
   if not vim.api.nvim_win_is_valid(pane.win) then return end
 
   local sel = state.panes[state.preview_src == "repos" and 1 or 2].sel
-  -- The view is part of the key: the same index means a different theme in
-  -- each view, so toggling must not leave the previous view's preview up.
-  local key = state.view .. ":" .. state.preview_src .. ":" .. tostring(sel)
+  local key = state.preview_src .. ":" .. tostring(sel)
   if state.preview_key == key then return end
   state.preview_key = key
 
-  --- Nothing to describe (an empty Managed view): say so, untinted.
+  --- Nothing to describe (a filter with no rows): say so, untinted.
   local function empty()
     state.preview_tinted = false
     vim.wo[pane.win].wrap = false
     pcall(vim.treesitter.stop, pane.buf)
-    render.render_lines(pane, list.build_preview(nil, pane.width, pane.height))
+    render.render_lines(pane, list.build_empty(pane.width,
+      state.preview_src == "repos" and state.filter or state.filter_cs))
     return " [3] Preview "
   end
 
@@ -216,58 +224,137 @@ function M.sync_preview(state, src)
 end
 
 --------------------------------------------------------------------- actions
---- The rows the repos pane shows in the current view.
----@param state table
----@return table[]
-local function view_items(state)
-  return state.view == "managed" and list.managed() or list.repos()
+--- "owner/name" split into its two sort keys. A name without `/` sorts as an
+--- empty owner and itself as the name.
+---@param name string
+---@return string owner
+---@return string base
+local function split_repo(name)
+  local slash = name:find("/", 1, true)
+  if not slash then return "", name end
+  return name:sub(1, slash - 1), name:sub(slash + 1)
 end
 
+---@param item Repo|ManagedItem
+---@return integer
+local function repo_stars(item)
+  if item.repo then return item.repo.stars end
+  return item.stars or 0
+end
+
+---@param mode "stars"|"name"|"owner"
+---@return fun(a: Repo|ManagedItem, b: Repo|ManagedItem): boolean
+local function repo_sort(mode)
+  return function(a, b)
+    local ao, an = split_repo(a.name)
+    local bo, bn = split_repo(b.name)
+    if mode == "name" then
+      if an ~= bn then return an < bn end
+    elseif mode == "owner" then
+      if ao ~= bo then return ao < bo end
+      if an ~= bn then return an < bn end
+    else
+      local as, bs = repo_stars(a), repo_stars(b)
+      if as ~= bs then return as > bs end
+      if an ~= bn then return an < bn end
+    end
+    return a.name < b.name
+  end
+end
+
+--- The rows the repos pane shows: the filter picks the item set and the sort
+--- orders it. The cached arrays are copied, never sorted in place.
 ---@param state table
----@return fun(item: table, width: integer, selected: boolean): table[]
-local function repo_builder(state)
-  return state.view == "managed" and list.build_managed or list.build_repo
+---@return table[]
+local function repo_items(state)
+  local items = {}
+  if state.filter == "managed" then
+    vim.list_extend(items, list.managed())
+  elseif state.filter == "installed" then
+    local status = list.statuses()
+    for _, repo in ipairs(list.repos()) do
+      local st = status[repo.name]
+      if st and st ~= "none" then items[#items + 1] = repo end
+    end
+  else
+    vim.list_extend(items, list.repos())
+  end
+  table.sort(items, repo_sort(state.sort_repo))
+  return items
+end
+
+--- A managed item carries a directory; a dataset repo does not.
+---@param item Repo|ManagedItem
+---@param width integer
+---@param selected boolean
+---@return table[]
+local function repo_builder(item, width, selected)
+  if item.dir then return list.build_managed(item, width, selected) end
+  return list.build_repo(item, width, selected)
+end
+
+--- The colorscheme rows of `item`, filtered by background and name-sorted.
+---@param state table
+---@param item Repo|ManagedItem?
+---@return { name: string, bg: string, hlgs: HighlightGroups? }[]
+local function cs_rows(state, item)
+  local rows = item and list.cs_rows_of(item) or {}
+  if state.filter_cs ~= "all" then
+    rows = vim.tbl_filter(function(row) return row.bg == state.filter_cs end, rows)
+  end
+  table.sort(rows, function(a, b)
+    if a.name ~= b.name then return a.name < b.name end
+    return a.bg < b.bg
+  end)
+  return rows
 end
 
 --- Re-render the colorscheme pane for `item`, unless it is already showing it.
+--- `keep_sel` forces a rebuild that clamps the current selection to the new
+--- row count instead of resetting to the first row.
 ---@param state table
 ---@param item Repo|ManagedItem?
-local function render_cs(state, item)
-  if not list.sync(item) then return end
-  local rows = item and list.cs_rows_of(item) or {}
-  render.render(state.panes[2], rows, 1, list.build_cs)
+---@param keep_sel boolean?
+local function render_cs(state, item, keep_sel)
+  local pane = state.panes[2]
+  local changed = list.sync(item)
+  if not changed and not keep_sel then return end
+  local rows = cs_rows(state, item)
+  local sel = 1
+  if keep_sel then sel = math.max(1, math.min(pane.sel or 1, #rows)) end
+  render.render(pane, rows, sel, list.build_cs)
 end
 
 --- Repaint the repo rows in place: install chips change after a job, and a job
---- can add or remove a Managed-view row.
+--- can move a repo into or out of the current filter.
 ---@param state table
-local function render_repos(state)
+---@param items table[]?
+local function render_repos(state, items)
   local pane = state.panes[1]
-  local items = view_items(state)
+  items = items or repo_items(state)
   if #items == 0 then
-    render.render_lines(pane, list.build_empty(pane.width))
+    render.render_lines(pane, list.build_empty(pane.width, state.filter))
     return
   end
   pane.sel = math.min(pane.sel or 1, #items)
-  render.render(pane, items, pane.sel, repo_builder(state))
+  render.render(pane, items, pane.sel, repo_builder)
 end
 
---- The selected item of the repos pane, or nil when the view is empty.
+--- The selected item of the repos pane, or nil when the filter yields nothing.
 ---@param state table
 ---@return Repo|ManagedItem?
 local function selected_item(state)
   return state.panes[1].items[state.panes[1].sel]
 end
 
---- How `item` is currently provided. Browse rows use the probe cached for
---- their chips; a Managed row is scanned live, so a theme whose directory
+--- How `item` is currently provided. Dataset rows use the probe cached for
+--- their chips; a managed row is scanned live, so a theme whose directory
 --- disappeared behind the panel's back cannot be deleted or applied as if it
 --- were still ours.
----@param state table
 ---@param item Repo|ManagedItem
 ---@return string?
-local function item_status(state, item)
-  if state.view == "managed" then return install.status(item.name) end
+local function item_status(item)
+  if item.dir then return install.status(item.name) end
   return list.statuses()[item.name]
 end
 
@@ -302,12 +389,7 @@ end
 function M.install_repo(state)
   local item = selected_item(state)
   if not item then return end
-  -- Every row of the Managed view is already installed; `i` is a Browse key.
-  if state.view == "managed" then
-    return vim.notify(("theme: %s is already installed here"):format(item.name),
-      vim.log.levels.WARN)
-  end
-  local status = item_status(state, item)
+  local status = item_status(item)
   if status == "elsewhere" then
     return vim.notify(("theme: %s is already provided by your config")
       :format(item.name), vim.log.levels.WARN)
@@ -324,14 +406,14 @@ end
 --- `x` is the only key that deletes anything, so it is gated twice over: the
 --- row must be ours (status `ours` or `shadow` -- `shadow` means our copy
 --- exists alongside the user's, and removing ours is exactly the resolution),
---- and the status is read live in the Managed view. A theme provided only by
---- the user's own config is never touched: this hands a shadowed theme back to
+--- and the status of a managed row is read live. A theme provided only by the
+--- user's own config is never touched: this hands a shadowed theme back to
 --- them and nothing else.
 ---@param state table
 function M.uninstall_repo(state)
   local item = selected_item(state)
   if not item then return end
-  local status = item_status(state, item)
+  local status = item_status(item)
   if status ~= "ours" and status ~= "shadow" then
     return vim.notify(
       ("theme: %s is not ours \u{2014} nothing was removed"):format(item.name),
@@ -347,11 +429,11 @@ function M.update_repo(state)
   if not item then return end
   -- Updating means re-cloning from the theme's own repo, which we only know
   -- for themes the dataset carries. A clone we cannot place is left alone.
-  if state.view == "managed" and not item.repo then
+  if item.dir and not item.repo then
     return vim.notify(("theme: %s is not in the theme index \u{2014} update it "
       .. "where you got it"):format(item.name), vim.log.levels.WARN)
   end
-  local status = item_status(state, item)
+  local status = item_status(item)
   if status ~= "ours" and status ~= "shadow" then
     return vim.notify(("theme: %s is not installed here"):format(item.name),
       vim.log.levels.WARN)
@@ -371,14 +453,14 @@ function M.apply_cs(state)
   local function apply()
     -- The row IS a background variant: applying it without moving
     -- vim.o.background would render the theme's other half. Rows without a
-    -- known variant (non-dataset Managed rows) keep the current background.
+    -- known variant (non-dataset managed rows) keep the current background.
     if row.bg ~= "" and vim.o.background ~= row.bg then
       vim.o.background = row.bg
     end
     cs.apply(row.name)
   end
 
-  local status = item_status(state, item)
+  local status = item_status(item)
   if status == "none" then
     job(state, item, function(r, done) install.install(r.name, done) end,
       function(ok) if ok then apply() end end)
@@ -387,36 +469,89 @@ function M.apply_cs(state)
   end
 end
 
---- Switch the repos pane between the harvested catalogue and our own pack dir,
---- keeping the focus where it is: the view changes what both lists show, so it
---- is reachable from either of them.
+--- Show `text` in pane `i`'s border for one second, then restore that pane's
+--- normal title. A second trigger cancels the pending timer, so an older
+--- restore never overwrites a newer flash.
 ---@param state table
----@param view "browse"|"managed"
-function M.set_view(state, view)
-  if state.view == view then return end
-  state.view = view
-  state.panes[1].sel = 1
-  list.forget()
-  vim.api.nvim_win_set_config(state.panes[1].win, {
-    title = view_title(view), title_pos = "center",
+---@param i integer
+---@param text string
+local function flash_title(state, i, text)
+  local pane = state.panes[i]
+  if state.closed or not vim.api.nvim_win_is_valid(pane.win) then return end
+  vim.api.nvim_win_set_config(pane.win, {
+    title = " " .. text .. " ", title_pos = "center",
   })
-  render.render_lines(state.hint,
-    list.build_hint(state.geo.hint.width, view))
-  render_repos(state)
-  render_cs(state, selected_item(state))
-  M.sync_preview(state)
+  local old = state.title_timers[i]
+  if old and not old:is_closing() then
+    old:stop()
+    old:close()
+  end
+  local timer = vim.uv.new_timer()
+  state.title_timers[i] = timer
+  timer:start(1000, 0, vim.schedule_wrap(function()
+    if timer:is_closing() then return end
+    timer:close()
+    if state.title_timers[i] == timer then state.title_timers[i] = nil end
+    if state.closed then return end
+    if vim.api.nvim_win_is_valid(pane.win) then
+      vim.api.nvim_win_set_config(pane.win, {
+        title = pane_title(i), title_pos = "center",
+      })
+    end
+  end))
 end
 
---- `[` / `]`: walk the repos pane's views, wrapping at either end. With two
---- views both keys are a toggle; the direction is kept for the tab metaphor.
+--- `F`: all -> installed -> managed. The repos selection resets, and both the
+--- colorscheme list and the preview follow the new selection.
 ---@param state table
----@param dir integer
-function M.cycle_view(state, dir)
-  local at = 1
-  for i, view in ipairs(VIEWS) do
-    if view == state.view then at = i end
+function M.cycle_repo_filter(state)
+  state.filter = cycle(state.filter, REPO_FILTERS)
+  state.panes[1].sel = 1
+  list.forget()
+  render_repos(state)
+  render_cs(state, selected_item(state))
+  state.preview_key = nil
+  M.sync_preview(state)
+  flash_title(state, 1, "filter: " .. state.filter)
+end
+
+--- `S`: stars -> name -> owner, keeping the selected item when it survives the
+--- reorder and falling back to the first row otherwise.
+---@param state table
+function M.cycle_repo_sort(state)
+  local prev = selected_item(state)
+  state.sort_repo = cycle(state.sort_repo, REPO_SORTS)
+  local items = repo_items(state)
+  local sel = 1
+  for i, item in ipairs(items) do
+    if item == prev then sel = i break end
   end
-  M.set_view(state, VIEWS[((at - 1 + dir) % #VIEWS) + 1])
+  state.panes[1].sel = sel
+  render_repos(state, items)
+  render_cs(state, selected_item(state))
+  state.preview_key = nil
+  M.sync_preview(state)
+  flash_title(state, 1, "sort: " .. state.sort_repo)
+end
+
+--- `F` on the colorscheme list: all -> light -> dark, clamped to the new row
+--- count.
+---@param state table
+function M.cycle_cs_filter(state)
+  state.filter_cs = cycle(state.filter_cs, CS_FILTERS)
+  render_cs(state, selected_item(state), true)
+  state.preview_key = nil
+  M.sync_preview(state)
+  flash_title(state, 2, "filter: " .. state.filter_cs)
+end
+
+--- `S` on the colorscheme list: name ascending, the only sort for now.
+---@param state table
+function M.sort_cs(state)
+  render_cs(state, selected_item(state), true)
+  state.preview_key = nil
+  M.sync_preview(state)
+  flash_title(state, 2, "sort: name")
 end
 
 ---@param state table
@@ -438,7 +573,7 @@ function M.move(state, delta)
   local sel = ((pane.sel - 1 + delta) % n) + 1
   if sel ~= pane.sel then
     if pane.kind == "repos" then
-      render.render(pane, pane.items, sel, repo_builder(state))
+      render.render(pane, pane.items, sel, repo_builder)
       render_cs(state, pane.items[sel])
     else
       render.render(pane, pane.items, sel, list.build_cs)
@@ -470,20 +605,20 @@ local function map_keys(state)
     map(pane.buf, "q", function() M.close(state) end)
     map(pane.buf, "<Esc>", function() M.close(state) end)
   end
-  -- The view tabs are pane-level, like Tab, so they work from either list.
-  for _, i in ipairs(LIST_PANES) do
-    local buf = state.panes[i].buf
-    map(buf, "[", function() M.cycle_view(state, -1) end)
-    map(buf, "]", function() M.cycle_view(state, 1) end)
-  end
+  -- Each list filters and sorts itself; the keys live on its own buffer.
+  local repos = state.panes[1].buf
+  local cs_buf = state.panes[2].buf
+  map(repos, "F", function() M.cycle_repo_filter(state) end)
+  map(repos, "S", function() M.cycle_repo_sort(state) end)
+  map(cs_buf, "F", function() M.cycle_cs_filter(state) end)
+  map(cs_buf, "S", function() M.sort_cs(state) end)
   -- Manage keys live on the repo list only. Its `<CR>` moves to the
   -- COLORSCHEME list: applying belongs to a colorscheme, not a repo.
-  local repos = state.panes[1].buf
   map(repos, "i", function() M.install_repo(state) end)
   map(repos, "x", function() M.uninstall_repo(state) end)
   map(repos, "u", function() M.update_repo(state) end)
   map(repos, "<CR>", function() M.focus(state, 2) end)
-  map(state.panes[2].buf, "<CR>", function() M.apply_cs(state) end)
+  map(cs_buf, "<CR>", function() M.apply_cs(state) end)
 end
 
 ---@return table
@@ -497,11 +632,9 @@ function M.open()
   local geo = M.layout(list.min_left_width())
   local state = {
     closed = false, focus = 1, panes = {}, geo = geo,
-    -- "browse" is the harvested catalogue (the default); "managed" is our own
-    -- pack dir. Both drive the same repos pane.
-    view = "browse",
+    filter = "all", sort_repo = "stars", filter_cs = "all",
     preview_src = "repos", preview_tinted = false, preview_key = nil,
-    origin = vim.api.nvim_get_current_win(), jobs = {},
+    origin = vim.api.nvim_get_current_win(), jobs = {}, title_timers = {},
   }
 
   -- Backdrop first: it sits behind everything and dims the editor behind
@@ -520,10 +653,8 @@ function M.open()
     state.panes[i] = render.new_pane({
       kind = key, row = g.row, col = g.col, width = g.width, height = g.height,
       -- The title carries the pane's number, so the number keys are
-      -- discoverable without reading the hint bar. Pane 1's title is its view
-      -- tab strip instead of a fixed name.
-      title = i == 1 and view_title(state.view)
-        or (" [%s] %s "):format(PANE_NUM[i], PANE_TITLE[i]),
+      -- discoverable without reading the hint bar.
+      title = pane_title(i),
     })
   end
 
@@ -535,7 +666,7 @@ function M.open()
   })
   vim.wo[state.hint.win].winhighlight =
     "Normal:ThemeUIHint,EndOfBuffer:ThemeUIHint"
-  render.render_lines(state.hint, list.build_hint(hg.width, state.view))
+  render.render_lines(state.hint, list.build_hint(hg.width))
 
   list.reset()
   state.panes[1].sel = 1
@@ -599,6 +730,13 @@ end
 function M.close(p)
   if not p or p.closed then return end
   p.closed = true
+  -- No title restore may fire after the panel is gone.
+  for _, timer in pairs(p.title_timers) do
+    if not timer:is_closing() then
+      timer:stop()
+      timer:close()
+    end
+  end
   if p.augroup then pcall(vim.api.nvim_del_augroup_by_id, p.augroup) end
   for _, pane in ipairs(p.panes) do render.close_pane(pane) end
   render.close_pane(p.hint)
