@@ -314,9 +314,23 @@ function M.build_cs(item, width, selected)
   return { ln }
 end
 
---- The repo preview: the README verbatim (raw markdown, the window wraps
---- it), or the wrapped description when the dataset has no readme for the
---- repo.
+--- README text as preview lines: one raw markdown line each, with a trailing
+--- newline dropped instead of becoming a trailing blank row.
+---@param text string
+---@return table[]
+function M.readme_lines(text)
+  local out = {}
+  text = text:gsub("\r\n", "\n")
+  for line in (text .. "\n"):gmatch("([^\n]*)\n") do
+    out[#out + 1] = render.markdown_line(line, "ThemeUICode")
+  end
+  if #out > 0 and out[#out]:str() == "" then out[#out] = nil end
+  return out
+end
+
+--- The repo preview fallback: the dataset's stored README verbatim (raw
+--- markdown, the window wraps it), or the wrapped description when the
+--- dataset has no readme for the repo.
 ---@param repo Repo
 ---@param width integer
 ---@param height integer
@@ -324,12 +338,7 @@ end
 function M.build_readme(repo, width, height)
   local out = {}
   if M.has_readme(repo) then
-    local text = repo.readme:gsub("\r\n", "\n")
-    for line in (text .. "\n"):gmatch("([^\n]*)\n") do
-      out[#out + 1] = render.markdown_line(line, "ThemeUICode")
-    end
-    -- A trailing newline should not become a trailing blank row.
-    if #out > 0 and out[#out]:str() == "" then out[#out] = nil end
+    out = M.readme_lines(repo.readme)
   else
     local wrapped = render.wrap(repo.description or "", math.max(1, width - 3),
       math.max(1, height - 2))

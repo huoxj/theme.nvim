@@ -44,6 +44,7 @@ One responsibility per file. Every module is a plain table (`local M = {}` …
 | `lua/theme/ui/render.lua` | Generic float-pane plumbing: the `Line` builder, painting, hand-drawn selection/segment extmarks, and the per-render swatch groups. |
 | `lua/theme/ui/chrome.lua` | Panel chrome: highlight groups (palette mined from the active colorscheme) and the `winhighlight` mapping per pane/focus. |
 | `lua/theme/ui/list.lua` | Panel content: repo rows, managed-theme rows, colorscheme rows (one per variant), the preview bodies, and the hint bar. |
+| `lua/theme/ui/readme.lua` | Live README preview for the repos pane: 500ms debounce, spinner, `curl` fetch from GitHub raw, stale-response drop, no cache. |
 | `lua/telescope/_extensions/theme.lua` | Registers the `themes` telescope extension. |
 | `plugin/theme.lua` | Defines the `:Theme` user command and its completion. |
 | `scripts/build_hljson.py` | Offline harvester: GitHub search → tarball → headless sampling → `hl.json`. |
@@ -167,9 +168,15 @@ Focus model:
 
 Preview (context-following):
 
-- Repos selection → the repo's README, verbatim (raw markdown, inline code
-  dimmed, window `wrap` on). Datasets without a `readme` fall back to the
-  wrapped `description`.
+- Repos selection → a live README. The pane immediately shows the dataset
+  `description` with an npm-style spinner, waits 500ms for the selection to
+  settle, then fetches `README.md` / `README.rst` / `README` / `readme.md` from
+  `raw.githubusercontent.com/<repo>/<default_branch>/` (first success wins) and
+  replaces the buffer with the raw markdown (inline code dimmed, `wrap` on).
+  Nothing is cached; a selection change or a close bumps a generation counter
+  and drops whatever was in flight. When every candidate fails the pane falls
+  back to the dataset `readme`, else the wrapped `description`; a managed theme
+  with no dataset record keeps that fallback view and never fetches.
 - Colorschemes selection → the sample source (`preview.fill`) tinted with the
   selected row's `hlgs` through `preview.tint` (window-local highlight
   namespace; `wrap` off). The window's `Normal` is left unmapped in
@@ -300,7 +307,8 @@ plugin usually still runs but silently misbehaves.
     argument is a no-op. The close paths that work are the buffer keymaps and
     the `WinClosed` autocmd, both of which capture the panel object. The panel
     state holds the three panes in `state.panes` plus `state.hint` and
-    `state.backdrop`; there is no frame window and no debounce timer.
+    `state.backdrop`; the only timer (besides the title flash) is the README
+    loader's debounce/spinner, owned and cancelled by `ui/readme.lua`.
 13. **Swatch columns in `ui/render.lua` are byte offsets**, and the glyph
     (`∙`, U+2219) is 3 bytes wide but 1 cell wide. Extmark columns must stay
     byte-based while padding stays display-width-based; mixing the two misaligns
@@ -320,10 +328,12 @@ plugin usually still runs but silently misbehaves.
     is the only surface that borrows another theme's colors (through
     `preview.tint`), and its `Normal` is deliberately left out of its
     `winhighlight` while tinted so the previewed theme's `Normal` shows.
-17. **`repo.readme` is optional.** The harvester stores a repo's README text
-    (capped at 8000 chars) in `repo.readme`; datasets built before the field
-    existed omit it. The panel falls back to the wrapped `description`, so both
-    shapes must keep working.
+17. **`repo.readme` is optional and is only the offline fallback.** The
+    harvester stores a repo's README text (capped at 8000 chars) in
+    `repo.readme`; datasets built before the field existed omit it. The repos
+    pane normally shows the live fetch (`ui/readme.lua`), and falls back to
+    `repo.readme` (or the wrapped `description`) only when every fetched
+    candidate fails, so both shapes must keep working.
 18. **The installer writes to its own pack dir and nothing else.**
     `install.dir(repo)` is `stdpath("data")/site/pack/theme/start/<basename>`;
     `install.uninstall` removes only that directory, and no code path ever

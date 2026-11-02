@@ -9,6 +9,7 @@ local M = {}
 
 local render = require("theme.ui.render")
 local list = require("theme.ui.list")
+local readme = require("theme.ui.readme")
 local chrome = require("theme.ui.chrome")
 local preview = require("theme.preview")
 local install = require("theme.install")
@@ -174,6 +175,7 @@ function M.sync_preview(state, src)
 
   --- Nothing to describe (a filter with no rows): say so, untinted.
   local function empty()
+    readme.cancel(state)
     state.preview_tinted = false
     vim.wo[pane.win].wrap = false
     pcall(vim.treesitter.stop, pane.buf)
@@ -189,15 +191,25 @@ function M.sync_preview(state, src)
       title = empty()
     else
       state.preview_tinted = false
-      -- Raw markdown reads badly clipped, so the readme window wraps; the code
-      -- sample below stays unwrapped, where clipping a long line is the
-      -- right thing.
-      vim.wo[pane.win].wrap = list.preview_wraps(item)
       -- Drop the lua highlighter the colorscheme view installed, or it would
       -- color the markdown as if it were code.
       pcall(vim.treesitter.stop, pane.buf)
-      render.render_lines(pane,
-        list.build_preview(item, pane.width, pane.height))
+      -- The dataset record behind this row: a dataset repo is itself, a
+      -- managed item delegates to `repo` (nil for a theme only on disk).
+      local repo = item
+      if item.dir then repo = item.repo end
+      if repo then
+        -- A live README: description + spinner now, fetched text after the
+        -- debounce. Raw markdown wraps.
+        readme.start(state, pane, item, repo)
+      else
+        -- A theme only on disk has no repo to fetch from: keep the clone
+        -- description (path + shipped colorschemes).
+        readme.cancel(state)
+        vim.wo[pane.win].wrap = list.preview_wraps(item)
+        render.render_lines(pane,
+          list.build_preview(item, pane.width, pane.height))
+      end
       title = " [3] " .. item.name .. " "
     end
   else
@@ -205,6 +217,7 @@ function M.sync_preview(state, src)
     if not row then
       title = empty()
     else
+      readme.cancel(state)
       state.preview_tinted = true
       vim.wo[pane.win].wrap = false
       preview.fill(pane.buf)
@@ -646,6 +659,7 @@ function M.open()
     closed = false, focus = 1, panes = {}, geo = geo,
     filter = "all", sort_repo = "stars", filter_cs = "all",
     preview_src = "repos", preview_tinted = false, preview_key = nil,
+    readme_gen = 0, readme_timers = nil,
     origin = vim.api.nvim_get_current_win(), jobs = {}, title_timers = {},
   }
 
@@ -741,6 +755,9 @@ end
 function M.close(p)
   if not p or p.closed then return end
   p.closed = true
+  -- No README fetch, spinner, or title restore may fire after the panel is
+  -- gone.
+  readme.cancel(p)
   -- No title restore may fire after the panel is gone.
   for _, timer in pairs(p.title_timers) do
     if not timer:is_closing() then
