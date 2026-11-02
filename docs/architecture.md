@@ -170,13 +170,14 @@ Preview (context-following):
 
 - Repos selection → a live README. The pane immediately shows the dataset
   `description` with an npm-style spinner, waits 500ms for the selection to
-  settle, then fetches `README.md` / `README.rst` / `README` / `readme.md` from
-  `raw.githubusercontent.com/<repo>/<default_branch>/` (first success wins) and
-  replaces the buffer with the raw markdown (inline code dimmed, `wrap` on).
-  Nothing is cached; a selection change or a close bumps a generation counter
-  and drops whatever was in flight. When every candidate fails the pane falls
-  back to the dataset `readme`, else the wrapped `description`; a managed theme
-  with no dataset record keeps that fallback view and never fetches.
+  settle, then requests `README.md` / `README.rst` / `README` / `readme.md` from
+  `raw.githubusercontent.com/<repo>/<default_branch>/` in parallel (first
+  success wins and kills the rest) and replaces the buffer with the raw
+  markdown (inline code dimmed, `wrap` on). Nothing is cached; leaving the row
+  or closing the panel bumps a generation counter and kills the outstanding
+  requests. When every candidate fails the pane falls back to the dataset
+  `readme`, else the wrapped `description`; a managed theme with no dataset
+  record keeps that fallback view and never fetches.
 - Colorschemes selection → the sample source (`preview.fill`) tinted with the
   selected row's `hlgs` through `preview.tint` (window-local highlight
   namespace; `wrap` off). The window's `Normal` is left unmapped in
