@@ -1,12 +1,14 @@
 # Theme.nvim
 
-> A powerful and comprehensive theme manager for Neovim
+> ✨ A powerful and comprehensive theme manager for Neovim
+
+<img src="./docs/images/screenshots.png" width="100%" />
 
 ## Features
 
-- 🗃️ Browse themes from GitHub, install them, and switch between installed ones
-- 📄 Repo READMEs rendered inside the panel (with an optional markdown renderer)
-- 🎲 Random theme on startup with customizable options
+- 🗃️ Browse, preview, install, switch between themes from GitHub, without leaving neovim
+- 📄 Repo READMEs rendered inside the panel
+- 🎲 Random theme with customizable options
 - ⏰ Auto light/dark theme detect and switching based on system time (planned)
 
 ## Installation
@@ -18,15 +20,20 @@ return {
   "huoxj/theme.nvim",
   lazy = false,
   dependencies = {
-    -- optional: renders the repo README inside the panel
-    "OXY2DEV/markview.nvim",
+    "OXY2DEV/markview.nvim", -- optional README renderer
   },
 }
 ```
 
-markview.nvim is optional. Neovim 0.11 bundles the markdown parsers it needs.
-Without it the panel shows an info card for the selected repo — name, author,
-stars, description and its colorschemes — instead of the rendered README.
+## Requirements
+
+- Neovim >= 0.9
+- git
+- curl
+- markview.nvim (optional, for README rendering)
+- telescope.nvim (optional, for theme picker)
+
+Markview.nvim is used to render the README of the theme repo in the preview pane. If it is not installed, a simple info card will be shown instead.
 
 ## Usage
 
@@ -41,9 +48,9 @@ stars, description and its colorschemes — instead of the rendered README.
 ### The panel
 
 `:Theme` opens three panes: `[1] Repos`, `[2] Colorschemes` and `[3] Preview`.
+
 `Tab` / `S-Tab` cycle through them, `1` / `2` / `3` jump straight to one, and
-`q` (or `<Esc>`) closes the panel. The bottom bar only lists the keys that work
-in the pane you are in.
+`q` (or `<Esc>`) closes the panel. The bottom bar only lists the keys that work in the pane you are in.
 
 Each Repos row carries an install chip: `✓` installed by theme.nvim, `≡`
 provided by your own config, `⚠` both.
