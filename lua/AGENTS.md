@@ -49,8 +49,9 @@ invariants; this file is the editing checklist.
 - **`ui/init.lua` is a singleton:** module-level `active` panel. `M.close(p)`
   requires the panel table — it does not fall back to `active`, so `M.close()`
   with no argument is a no-op. The panel state holds `state.panes` (repos, cs,
-  preview) plus `state.hint` and `state.backdrop`; there is no frame window and
-  no debounce timer. Close only through the buffer keymaps or the `WinClosed`
+  preview) plus `state.hint` and `state.backdrop`; the only timer besides the
+  title flash is the README loader's debounce/spinner, owned and cancelled by
+  `ui/readme.lua`. Close only through the buffer keymaps or the `WinClosed`
   autocmd, which pass `p`.
 - **`ui/list.lua` must reset `prev_repo` in `reset()` (called from `open()`)**,
   otherwise reopening the panel with the same first repo selected leaves the
@@ -80,8 +81,10 @@ invariants; this file is the editing checklist.
 - **Panel chrome is derived from the active colorscheme** (`ui/chrome.lua`,
   `ThemeUI*` groups). The tinted preview is the only pane that borrows another
   theme's colors, and its `Normal` stays out of `winhighlight` while tinted.
-- **`repo.readme` is optional**; the panel falls back to the wrapped
-  `description`. Keep both shapes working.
+- **`repo.readme` is optional and is only the fallback.** The repos preview
+  fetches the README live (`ui/readme.lua`); when every candidate fails the pane
+  shows the dataset `readme`, else the wrapped `description`. Keep both shapes
+  working, and never write fetched text back into the dataset.
 
 ## Verifying changes
 
@@ -91,7 +94,7 @@ Run the module smoke test and the panel cycle from `docs/architecture.md`:
 nvim --headless -u NONE -c 'set rtp+=.' -c 'lua
 for _, m in ipairs({"theme","theme.config","theme.pool","theme.data",
   "theme.colorscheme","theme.preview","theme.preview_code","theme.ui",
-  "theme.ui.render","theme.ui.chrome","theme.ui.list",
+  "theme.ui.render","theme.ui.chrome","theme.ui.list","theme.ui.readme",
   "theme.install"}) do require(m) end
 print("modules ok")' -c 'qa!'
 ```

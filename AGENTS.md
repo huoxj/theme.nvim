@@ -25,6 +25,7 @@ lua/theme/ui/init.lua       panel: layout/open/close, focus model, keymaps
 lua/theme/ui/render.lua     float-pane plumbing: Line builder, paint, swatches
 lua/theme/ui/chrome.lua     panel highlight groups + winhighlight mapping
 lua/theme/ui/list.lua       repo/colorscheme rows, readme preview body, hint bar
+lua/theme/ui/readme.lua     live README preview: debounce + spinner + parallel fetch
 lua/telescope/_extensions/theme.lua   telescope extension registration
 plugin/theme.lua            :Theme user command + completion
 scripts/build_hljson.py     offline harvester (GitHub -> headless nvim -> hl.json)
@@ -79,6 +80,11 @@ module map, data flow, and the numbered invariants/gotchas. The short version:
   (`3`) is read mode. `<CR>` on a repo row moves to the colorscheme list.
 - Previews never apply a colorscheme; they write to a window-local highlight
   namespace.
+- The repos preview is a **live README** (`ui/readme.lua`): description +
+  spinner immediately, a 500ms debounce, then the four README candidates
+  requested in parallel from GitHub raw (first success wins, the rest are
+  killed), no cache, stale responses dropped by generation. The dataset
+  `readme` is only the fallback when every candidate fails.
 
 ## Editing rules
 
