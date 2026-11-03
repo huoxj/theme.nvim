@@ -83,25 +83,6 @@ function M.fit(s, maxw)
   return out .. "\u{2026}"
 end
 
---- One line of raw markdown, with `inline code` runs dimmed. Deliberately not a
---- markdown renderer: every syntax character stays on screen.
----@param s string
----@param code_group string
----@return table
-function M.markdown_line(s, code_group)
-  local ln = M.line()
-  local i = 1
-  while true do
-    local a, b = s:find("`[^`]*`", i)
-    if not a then break end
-    if a > i then ln:text(s:sub(i, a - 1)) end
-    ln:text(s:sub(a, b), code_group)
-    i = b + 1
-  end
-  if i <= #s then ln:text(s:sub(i)) end
-  return ln
-end
-
 --- Greedy word wrap to `width` display cells, optionally capped at `max_lines`
 --- (the last kept line then ends in an ellipsis).
 ---@param s string

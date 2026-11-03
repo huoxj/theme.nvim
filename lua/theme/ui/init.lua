@@ -176,9 +176,9 @@ function M.sync_preview(state, src)
   --- Nothing to describe (a filter with no rows): say so, untinted.
   local function empty()
     readme.cancel(state)
+    readme.clear(pane)
     state.preview_tinted = false
     vim.wo[pane.win].wrap = false
-    pcall(vim.treesitter.stop, pane.buf)
     render.render_lines(pane, list.build_empty(pane.width,
       state.preview_src == "repos" and state.filter or state.filter_cs))
     return " [3] Preview "
@@ -191,24 +191,18 @@ function M.sync_preview(state, src)
       title = empty()
     else
       state.preview_tinted = false
-      -- Drop the lua highlighter the colorscheme view installed, or it would
-      -- color the markdown as if it were code.
-      pcall(vim.treesitter.stop, pane.buf)
       -- The dataset record behind this row: a dataset repo is itself, a
       -- managed item delegates to `repo` (nil for a theme only on disk).
       local repo = item
       if item.dir then repo = item.repo end
       if repo then
-        -- A live README: description + spinner now, fetched text after the
-        -- debounce. Raw markdown wraps.
+        -- A live README: description + spinner now, fetched markdown after
+        -- the debounce, rendered by markview when it is available.
         readme.start(state, pane, item, repo)
       else
-        -- A theme only on disk has no repo to fetch from: keep the clone
-        -- description (path + shipped colorschemes).
-        readme.cancel(state)
-        vim.wo[pane.win].wrap = list.preview_wraps(item)
-        render.render_lines(pane,
-          list.build_preview(item, pane.width, pane.height))
+        -- A theme only on disk has no repo to fetch from: show the static
+        -- info card (path + shipped colorschemes).
+        readme.info(state, pane, item)
       end
       title = " [3] " .. item.name .. " "
     end
@@ -218,6 +212,7 @@ function M.sync_preview(state, src)
       title = empty()
     else
       readme.cancel(state)
+      readme.clear(pane)
       state.preview_tinted = true
       vim.wo[pane.win].wrap = false
       preview.fill(pane.buf)
@@ -758,6 +753,9 @@ function M.close(p)
   -- No README fetch, spinner, or title restore may fire after the panel is
   -- gone.
   readme.cancel(p)
+  -- Drop any markview render while the buffer still exists, so no extmarks or
+  -- conceallevel survive into a wiped buffer.
+  readme.clear(p.panes[3])
   -- No title restore may fire after the panel is gone.
   for _, timer in pairs(p.title_timers) do
     if not timer:is_closing() then

@@ -8,8 +8,9 @@
 --                                                  dark  = HighlightGroups? } }
 --
 -- `readme` is the repo's README text (capped by the harvester). Datasets built
--- before the field existed simply omit it; the panel then falls back to the
--- wrapped `description`.
+-- before the field existed simply omit it. The panel no longer displays it:
+-- the live README is rendered with markview, and every fallback is the info
+-- card built from the rest of the record.
 --
 -- Only repos whose colorschemes could be sampled are present.
 

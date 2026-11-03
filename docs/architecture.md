@@ -43,8 +43,8 @@ One responsibility per file. Every module is a plain table (`local M = {}` …
 | `lua/theme/ui/init.lua` | Panel lifecycle: layout, open/close, the focus model, keymaps, and preview wiring. |
 | `lua/theme/ui/render.lua` | Generic float-pane plumbing: the `Line` builder, painting, hand-drawn selection/segment extmarks, and the per-render swatch groups. |
 | `lua/theme/ui/chrome.lua` | Panel chrome: highlight groups (palette mined from the active colorscheme) and the `winhighlight` mapping per pane/focus. |
-| `lua/theme/ui/list.lua` | Panel content: repo rows, managed-theme rows, colorscheme rows (one per variant), the preview bodies, and the hint bar. |
-| `lua/theme/ui/readme.lua` | Live README preview for the repos pane: 500ms debounce, spinner, `curl` fetch from GitHub raw, stale-response drop, no cache. |
+| `lua/theme/ui/list.lua` | Panel content: repo rows, managed-theme rows, colorscheme rows (one per variant), the info card, and the hint bar. |
+| `lua/theme/ui/readme.lua` | Live README preview for the repos pane: optional markview render, 500ms debounce, spinner, `curl` fetch from GitHub raw, stale-response drop, no cache, info-card fallback. |
 | `lua/telescope/_extensions/theme.lua` | Registers the `themes` telescope extension. |
 | `plugin/theme.lua` | Defines the `:Theme` user command and its completion. |
 | `scripts/build_hljson.py` | Offline harvester: GitHub search → tarball → headless sampling → `hl.json`. |
@@ -173,11 +173,18 @@ Preview (context-following):
   settle, then requests `README.md` / `README.rst` / `README` / `readme.md` from
   `raw.githubusercontent.com/<repo>/<default_branch>/` in parallel (first
   success wins and kills the rest) and replaces the buffer with the raw
-  markdown (inline code dimmed, `wrap` on). Nothing is cached; leaving the row
-  or closing the panel bumps a generation counter and kills the outstanding
-  requests. When every candidate fails the pane falls back to the dataset
-  `readme`, else the wrapped `description`; a managed theme with no dataset
-  record keeps that fallback view and never fetches.
+  markdown (`wrap` on). The raw text is rendered with markview when that plugin
+  and both markdown treesitter parsers are loadable (probed once per session);
+  without it the pane shows the info card instead and never fetches. Nothing is
+  cached; leaving the row or closing the panel bumps a generation counter and
+  kills the outstanding requests. When every candidate fails, or markview
+  raises, the pane shows the info card. A managed theme with no dataset record
+  always shows the info card.
+- The info card (`list.build_info`) is plain `render.Line` text wrapped to the
+  pane width: a bold title with the repo icon, author/stars when the dataset
+  knows the repo, the description (or the clone path for a managed-only
+  theme), and a `▸ colorschemes` section. It replaces every dead preview path;
+  the dataset's stored `readme` is no longer displayed.
 - Colorschemes selection → the sample source (`preview.fill`) tinted with the
   selected row's `hlgs` through `preview.tint` (window-local highlight
   namespace; `wrap` off). The window's `Normal` is left unmapped in
@@ -239,7 +246,8 @@ job, so the panel never stats the filesystem per frame.
 Chrome groups (`ThemeUI*`) are (re)defined on each open from the user's active
 colorscheme (`Normal`, `Title`, `LineNr`, `CursorLine`, `StatusLine`, `Pmenu`,
 `NonText`), so the panel blends into the current editor; the preview is the only
-surface that borrows another theme's colors.
+surface that borrows another theme's colors. `ThemeUIBold` (pane foreground +
+bold) is used by the info card's title line.
 
 ## Invariants and gotchas
 
@@ -288,8 +296,9 @@ plugin usually still runs but silently misbehaves.
    dedicated `theme_preview` namespace and calls `nvim_win_set_hl_ns` on the
    target window only. Nothing in the preview path touches `vim.cmd.colorscheme`.
    `preview.fill` is the only writer of the *sample* buffer; the panel's readme
-   view writes its own lines into the same pane buffer (and stops the lua
-   treesitter highlighter first, or it would color the markdown as code).
+   view writes its own lines into the same pane buffer (stopping the lua
+   treesitter highlighter and clearing any markview render first, or the old
+   extmarks and `conceallevel=3` would survive onto the new content).
 9. **The picker's preview is hardcoded to the `dark` background**
    (`data.query_hl(entry.value, "dark")`). The panel uses each row's real
    background.
@@ -329,12 +338,13 @@ plugin usually still runs but silently misbehaves.
     is the only surface that borrows another theme's colors (through
     `preview.tint`), and its `Normal` is deliberately left out of its
     `winhighlight` while tinted so the previewed theme's `Normal` shows.
-17. **`repo.readme` is optional and is only the offline fallback.** The
-    harvester stores a repo's README text (capped at 8000 chars) in
-    `repo.readme`; datasets built before the field existed omit it. The repos
-    pane normally shows the live fetch (`ui/readme.lua`), and falls back to
-    `repo.readme` (or the wrapped `description`) only when every fetched
-    candidate fails, so both shapes must keep working.
+17. **The repos preview never shows `repo.readme`; the field stays in the
+    schema.** The harvester still stores a repo's README text (capped at 8000
+    chars) in `repo.readme`, and datasets built before the field existed omit
+    it, but no UI path reads it any more. A live README is rendered by
+    markview when available; every other case (no markview, no dataset record,
+    fetch failure, render failure) shows the info card built from the dataset
+    record or the local clone.
 18. **The installer writes to its own pack dir and nothing else.**
     `install.dir(repo)` is `stdpath("data")/site/pack/theme/start/<basename>`;
     `install.uninstall` removes only that directory, and no code path ever
@@ -403,7 +413,7 @@ nvim --headless -u NONE -c 'set rtp+=.' -c 'lua
 for _, m in ipairs({
   "theme","theme.config","theme.pool","theme.data","theme.colorscheme",
   "theme.preview","theme.preview_code","theme.ui","theme.ui.render",
-  "theme.ui.chrome","theme.ui.list","theme.install",
+  "theme.ui.chrome","theme.ui.list","theme.ui.readme","theme.install",
 }) do require(m) end
 print("modules ok")' -c 'qa!'
 

@@ -4,7 +4,8 @@
 
 ## Features
 
-- 🗃️ Browse and preview themes from github, and switch between installed ones
+- 🗃️ Browse themes from GitHub, install them, and switch between installed ones
+- 📄 Repo READMEs rendered inside the panel (with an optional markdown renderer)
 - 🎲 Random theme on startup with customizable options
 - ⏰ Auto light/dark theme detect and switching based on system time (planned)
 
@@ -16,11 +17,16 @@
 return {
   "huoxj/theme.nvim",
   lazy = false,
-  opts = {
-    -- your config here
+  dependencies = {
+    -- optional: renders the repo README inside the panel
+    "OXY2DEV/markview.nvim",
   },
 }
 ```
+
+markview.nvim is optional. Neovim 0.11 bundles the markdown parsers it needs.
+Without it the panel shows an info card for the selected repo — name, author,
+stars, description and its colorschemes — instead of the rendered README.
 
 ## Usage
 
@@ -32,46 +38,60 @@ return {
 | `:Theme random` | Apply a random theme from the random pool. |
 | `:Telescope themes` | Pick from every theme on `runtimepath` (requires telescope.nvim). |
 
-Previews never change your active colorscheme; `<CR>` on the colorscheme list is
-the only key that applies one (see
-[Managing installed themes](#managing-installed-themes)).
+### The panel
 
-### Managing installed themes
+`:Theme` opens three panes: `[1] Repos`, `[2] Colorschemes` and `[3] Preview`.
+`Tab` / `S-Tab` cycle through them, `1` / `2` / `3` jump straight to one, and
+`q` (or `<Esc>`) closes the panel. The bottom bar only lists the keys that work
+in the pane you are in.
 
-theme.nvim manages the themes it installs itself, in its own namespace:
-`stdpath("data")/site/pack/theme/start`. The Repos list has two views, shown as
-tabs on its title and switched with `[` and `]` from either list:
+Each Repos row carries an install chip: `✓` installed by theme.nvim, `≡`
+provided by your own config, `⚠` both.
 
-- **Browse** (the default) — the whole catalogue, most-starred first. Each row
-  carries an install chip: `✓` installed by theme.nvim, `≡` provided by your own
-  config, `⚠` both. Title: `[1] [Browse] Managed`.
-- **Managed** — only the themes under theme.nvim's own pack dir. Title:
-  `[1] Browse [Managed]`.
-
-With a repo selected in the Browse view:
+Repos list:
 
 | Key | Action |
 | --- | --- |
+| `j` / `k` | Move the selection; the colorscheme list and the preview follow. |
+| `Enter` | Go to the colorscheme list. |
 | `i` | Install the repo (shallow clone, then `:packadd`). |
 | `x` | Uninstall it — removes theme.nvim's own copy only. |
 | `u` | Update it (re-clone from scratch). |
+| `f` | Filter: all → installed → managed. |
+| `s` | Sort: stars → name → owner. |
 
-In the Managed view `x` and `u` do the same, and the colorscheme list describes
-the selected theme. `u` needs the theme's repository, which is only known for
-themes in the catalogue; for one you dropped into the pack dir yourself the
-panel says so instead of guessing.
+Colorscheme list:
+
+| Key | Action |
+| --- | --- |
+| `Enter` | Switch to the selected colorscheme; if its repo is not installed yet, install it first. |
+| `f` | Filter: all → light → dark. |
+| `s` | Sort by name. |
+
+The filter chooses the rows: `all` is the whole catalogue, `installed` keeps the
+themes already provided (by theme.nvim or your own config), and `managed` shows
+only what theme.nvim's own pack dir holds. The sort orders whatever the filter
+left — `stars` descending, `name` and `owner` ascending. The two are
+independent.
+
+The Preview follows the focused list. On the Repos list it is the repo's
+README, rendered with markview.nvim when it is installed; otherwise (and while
+the README is still loading) it is an info card with the repo's name, author,
+stars, description and colorschemes. On the Colorscheme list it is the sample
+code tinted with the selected colorscheme.
+
+### Installed themes
+
+theme.nvim manages the themes it installs itself, in its own namespace:
+`stdpath("data")/site/pack/theme/start`. A successful install is `:packadd`-ed
+right away, so the theme is usable in the current session and lands in the
+random pool from the next start on — narrow the pool with `random_pool.exclude`
+if you want to.
 
 `x` only ever deletes theme.nvim's own copy: on a row that is not ours (a theme
 your config provides, or nothing at all) it refuses and leaves the filesystem
 alone. That is also how a shadowed theme is resolved — removing our copy hands
 it back to your own management.
-
-`<CR>` applies a colorscheme, and it lives on the colorscheme list: press it
-there, and the row's theme must be installed (`✓`/`⚠` in Browse, any row in
-Managed). Anything else gets a hint to install it first. Installed themes land
-in `pack/theme/start`, so they are on `runtimepath` from the next start on and
-join the random pool automatically — narrow the pool with
-`random_pool.exclude` if you want to.
 
 The panel never installs over a theme your config already provides. Your config
 is never touched, moved, or written to.
@@ -80,7 +100,9 @@ is never touched, moved, or written to.
 
 On startup, theme.nvim picks a random theme from the **random pool**.
 
-Random pool = `include` - `exclude`. It support both theme name or predefined tag, starting with `#`.
+Random pool = `include` - `exclude` - the current theme, deduplicated. Both
+sides take theme names or predefined tags starting with `#`. The defaults are
+`include = { "#all" }` and `exclude = {}`.
 
 For example, if you want to randomly pick theme from all themes except neovim built-in theme `default` and `blue`:
 
@@ -97,7 +119,7 @@ Available tags:
 
 | Tag | Description |
 | --- | --- |
-| `#all` | All loaded themes under run time path |
+| `#all` | Every colorscheme on `runtimepath` (built-in and installed) |
 | `#builtin` | Neovim built-in themes |
 
 > More tags and customizable tags are on the way
@@ -121,5 +143,7 @@ Any suggestions and contributions are welcome. Feel free to open an issue or sub
 - [ ] Like/dislike theme
 - [x] Theme switching panel
 - [x] Github theme browser & previewer
+- [x] Install / update / remove themes from the panel
+- [x] Filter and sort the repo and colorscheme lists
+- [x] Live README in the repo preview
 - [ ] Light/dark theme detection & time-based switching
-

@@ -83,8 +83,13 @@ module map, data flow, and the numbered invariants/gotchas. The short version:
 - The repos preview is a **live README** (`ui/readme.lua`): description +
   spinner immediately, a 500ms debounce, then the four README candidates
   requested in parallel from GitHub raw (first success wins, the rest are
-  killed), no cache, stale responses dropped by generation. The dataset
-  `readme` is only the fallback when every candidate fails.
+  killed), no cache, stale responses dropped by generation. The fetched
+  markdown is rendered by **markview.nvim when it is installed** (optional
+  dependency, probed once per session together with the bundled `markdown`
+  parsers); every other case — no markview, a managed theme with no dataset
+  record, a failed fetch or a failed render — shows the **info card**
+  (`list.build_info`: name, author, stars, description, colorschemes). The
+  dataset `readme` field is never displayed.
 
 ## Editing rules
 

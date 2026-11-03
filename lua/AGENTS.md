@@ -81,10 +81,12 @@ invariants; this file is the editing checklist.
 - **Panel chrome is derived from the active colorscheme** (`ui/chrome.lua`,
   `ThemeUI*` groups). The tinted preview is the only pane that borrows another
   theme's colors, and its `Normal` stays out of `winhighlight` while tinted.
-- **`repo.readme` is optional and is only the fallback.** The repos preview
-  fetches the README live (`ui/readme.lua`); when every candidate fails the pane
-  shows the dataset `readme`, else the wrapped `description`. Keep both shapes
-  working, and never write fetched text back into the dataset.
+- **The repos preview never reads `repo.readme`.** `ui/readme.lua` fetches the
+  README live and hands it to markview.nvim when that optional plugin (plus the
+  bundled markdown parsers) is loadable; the info card (`list.build_info`) is
+  the fallback for no renderer, no dataset record, a failed fetch or a failed
+  render. Clear the markview render (`readme.clear`) whenever the pane content
+  is replaced, or its extmarks and `conceallevel=3` survive onto the new text.
 
 ## Verifying changes
 

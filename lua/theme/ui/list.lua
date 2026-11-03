@@ -11,6 +11,12 @@ local install = require("theme.install")
 local SWATCH_GROUPS = { "Search", "PmenuSel", "Visual", "StatusLine", "Pmenu" }
 local LABEL_W = 5 -- widest variant label ("light")
 
+-- Glyphs on the info card, matching the panel's existing icon style.
+local REPO_ICON = "\u{f09b}"
+local USER_ICON = "\u{f007}"
+local STAR = "\u{2605}"
+local SECTION = "\u{25B8}"
+
 -- Install-state chip on a repo row: ours (installed by the panel), elsewhere
 -- (provided by the user's own config), shadow (both). "none" renders blank.
 local CHIP = { ours = "\u{2713}", elsewhere = "\u{2261}", shadow = "\u{26A0}" }
@@ -171,14 +177,6 @@ function M.cs_rows_of(item)
   return M.cs_rows_managed(item)
 end
 
---- Whether the dataset carries a README for this repo. Harvests made before the
---- readme field existed simply have none.
----@param repo Repo
----@return boolean
-function M.has_readme(repo)
-  return repo.readme ~= nil and repo.readme ~= ""
-end
-
 --- Fresh panel: forget the last rendered item so the colorscheme list is built
 --- again. Without this, reopening with the same first repo selected would keep
 --- the previous panel's (empty) colorscheme pane.
@@ -314,74 +312,76 @@ function M.build_cs(item, width, selected)
   return { ln }
 end
 
---- README text as preview lines: one raw markdown line each, with a trailing
---- newline dropped instead of becoming a trailing blank row.
----@param text string
----@return table[]
-function M.readme_lines(text)
-  local out = {}
-  text = text:gsub("\r\n", "\n")
-  for line in (text .. "\n"):gmatch("([^\n]*)\n") do
-    out[#out + 1] = render.markdown_line(line, "ThemeUICode")
-  end
-  if #out > 0 and out[#out]:str() == "" then out[#out] = nil end
-  return out
-end
-
---- The repo preview fallback: the dataset's stored README verbatim (raw
---- markdown, the window wraps it), or the wrapped description when the
---- dataset has no readme for the repo.
----@param repo Repo
+--- The info card: what the preview shows when no live markdown render is
+--- available (no markview, a managed theme with no dataset record, or a render
+--- failure). Unlike a README, prose is wrapped here and the pane does not wrap.
+--- Layout: icon + name, author/stars, description, then the colorschemes.
+---@param item Repo|ManagedItem
 ---@param width integer
 ---@param height integer
 ---@return table[]
-function M.build_readme(repo, width, height)
+function M.build_info(item, width, height)
+  local repo = item.repo
+  if not repo and harvested(item) then repo = item end
+
   local out = {}
-  if M.has_readme(repo) then
-    out = M.readme_lines(repo.readme)
+  ---@param ln table
+  local function emit(ln)
+    out[#out + 1] = ln:pad(width)
+  end
+
+  local title = repo and repo.name or item.name
+  emit(render.line():text("  ")
+    :text(render.fit(REPO_ICON .. "  " .. title, width - 2), "ThemeUIBold"))
+
+  if repo then
+    local owner = repo.name:match("^([^/]+)/") or repo.name
+    local stars = tostring(repo.stars)
+    local meta = render.line():text("  ")
+    meta:text(USER_ICON .. " ", "ThemeUIDim")
+    meta:text(render.fit(owner, math.max(1, width - meta.width - 5 - #stars)),
+      "ThemeUIName")
+    meta:text("   ")
+    meta:text(STAR .. " ", "ThemeUIStar")
+    meta:text(stars, "ThemeUIDim")
+    emit(meta)
+    for _, text in ipairs(render.wrap(repo.description or "",
+      math.max(1, width - 2))) do
+      emit(render.line():text("  "):text(text, "ThemeUIDim"))
+    end
   else
-    local wrapped = render.wrap(repo.description or "", math.max(1, width - 3),
-      math.max(1, height - 2))
-    for _, line in ipairs(wrapped) do
-      out[#out + 1] =
-        render.line():text("  "):text(line, "ThemeUIDim"):pad(width)
+    for _, text in ipairs(render.wrap(item.dir, math.max(1, width - 2))) do
+      emit(render.line():text("  "):text(text, "ThemeUIDim"))
     end
   end
-  return out
-end
 
---- The preview body for the selected item: the dataset README (or the wrapped
---- description) when the dataset knows the theme, otherwise what our own clone
---- tells us -- where it lives and which colorschemes it ships. With nothing
---- selected (an empty list) it is the empty-state note.
----@param item Repo|ManagedItem?
----@param width integer
----@param height integer
----@return table[]
-function M.build_preview(item, width, height)
-  if not item then return M.build_empty(width) end
-  if harvested(item) then return M.build_readme(item, width, height) end
+  emit(render.line())
+  emit(render.line():text("  " .. SECTION .. " colorschemes", "ThemeUIAccent"))
 
-  local out = {}
-  ---@param text string
-  ---@param group string?
-  local function line(text, group)
-    out[#out + 1] = render.line():text("  "):text(text, group):pad(width)
+  local colors = {}
+  if repo then
+    colors = vim.tbl_values(repo.colorschemes)
+    table.sort(colors, function(a, b) return a.name < b.name end)
+  else
+    for _, name in ipairs(clone_colorschemes(item.dir)) do
+      colors[#colors + 1] = { name = name }
+    end
   end
-  line(item.dir, "ThemeUIDim")
-  line("")
-  for _, name in ipairs(clone_colorschemes(item.dir)) do
-    line(name, "ThemeUIName")
+  for _, color in ipairs(colors) do
+    local ln = render.line():text("  ")
+    local label = color.bg_type
+    if label and label ~= "" then
+      ln:text(render.fit(color.name, math.max(1, width - ln.width - 2 - #label)),
+        "ThemeUIName")
+      ln:text("  ")
+      ln:text(label, "ThemeUITag")
+    else
+      ln:text(render.fit(color.name, math.max(1, width - ln.width)),
+        "ThemeUIName")
+    end
+    emit(ln)
   end
   return out
-end
-
---- Whether the preview window should wrap for this item. Only dataset READMEs
---- are prose; a path and a list of names read better clipped.
----@param item Repo|ManagedItem?
----@return boolean
-function M.preview_wraps(item)
-  return item ~= nil and harvested(item) and M.has_readme(item)
 end
 
 --- The bottom bar, padded to `width`. `ctx.kind` is the focused pane
